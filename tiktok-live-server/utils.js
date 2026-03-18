@@ -1,0 +1,43 @@
+/**
+ * 安全工具函数（从 server.js 提取，便于单元测试）
+ */
+
+/**
+ * HTML 转义，防止 XSS
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * 验证 TikTok 用户名格式
+ * 规则：只允许字母、数字、下划线和点，长度 1-24
+ */
+function isValidUsername(username) {
+  if (typeof username !== 'string') return false;
+  return /^[a-zA-Z0-9_.]{1,24}$/.test(username);
+}
+
+/**
+ * 验证请求来源（允许 Chrome 扩展和本地访问）
+ */
+function isAllowedOrigin(origin) {
+  if (!origin) return true; // 本地直接连接（如 Node.js 客户端）
+  // 允许 Chrome 扩展和本地页面（精确匹配 hostname，防止 localhost.evil.com bypass）
+  try {
+    const url = new URL(origin);
+    if (url.protocol === 'chrome-extension:') return true;
+    return (url.hostname === 'localhost' || url.hostname === '127.0.0.1') &&
+           (url.protocol === 'http:' || url.protocol === 'https:');
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { escapeHtml, isValidUsername, isAllowedOrigin };

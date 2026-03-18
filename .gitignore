@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.output/
+
+# WXT cache
+.wxt/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / AI config (local only)
+.agent/
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.kiro/
+.opencode/
+.trae/
+.windsurf/
+skills/
+
+# Docs / plans (development process notes)
+docs/
+
+# Icon drafts
+icon-drafts/
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# Lock files (each subproject has its own)
+# Keep package-lock.json in subprojects

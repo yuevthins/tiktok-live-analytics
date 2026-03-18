@@ -1,0 +1,27 @@
+{
+  "name": "tiktok-live-extension",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "generate:chartjs": "npx tsx scripts/generate-chartjs-inline.ts",
+    "predev": "npm run generate:chartjs",
+    "dev": "wxt",
+    "prebuild": "npm run generate:chartjs",
+    "build": "wxt build",
+    "postbuild": "cp -r public/icons dist/chrome-mv3/",
+    "zip": "wxt zip",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "dexie": "^4.3.0",
+    "vue": "^3.4.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@wxt-dev/module-vue": "^1.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.0",
+    "wxt": "^0.19.0"
+  }
+}
