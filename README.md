@@ -4,18 +4,67 @@ A Chrome extension + local Node server for real-time TikTok live stream data col
 
 Chrome 扩展 + 本地 Node 服务器，实时采集 TikTok 直播间数据并分析。
 
-## Features / 功能
+## Screenshots / 截图
 
-- **Real-time data capture / 实时数据采集** — Comments, gifts, likes, follows, shares, viewer counts
-  评论、礼物、点赞、关注、分享、观众数
-- **Persistent storage / 持久化存储** — IndexedDB via Dexie.js, data survives browser restart
-  基于 IndexedDB (Dexie.js)，浏览器重启不丢数据
-- **Multi-format export / 多格式导出** — JSON, Excel (.xlsx), self-contained HTML report with charts
-  JSON、Excel、自包含 HTML 报告（含图表）
-- **Session management / 会话管理** — Each live stream is a separate session with full history
-  每场直播独立会话，完整历史记录
-- **Security hardened / 安全加固** — Origin validation, input sanitization, wsUrl whitelist
-  来源验证、输入消毒、WebSocket 地址白名单
+### Connect / 连接直播间
+
+<img src="screenshots/01-connect.png" width="360" alt="Connect to live room">
+
+Enter a TikTok username and click Connect to start collecting data.
+
+输入 TikTok 用户名，点击连接即可开始采集数据。
+
+### Live Dashboard / 实时监控面板
+
+<img src="screenshots/02-live-dashboard.png" width="360" alt="Live monitoring dashboard">
+
+| Feature / 功能 | Description / 说明 |
+|---|---|
+| Viewer count / 观众数 | Real-time count with delta indicator and peak tracking / 实时观众数，含变化趋势和峰值追踪 |
+| Comment count / 评论数 | Total comments collected in current session / 当前会话累计评论总数 |
+| Duration / 直播时长 | Live timer since connection / 连接后实时计时 |
+| Likes / 点赞 | Accumulated likes with compact number format / 累计点赞数，大数字自动缩写 |
+| Gifts / 礼物 | Gift events count / 礼物事件计数 |
+| Viewer trend chart / 观众趋势图 | Chart.js line chart with peak marker / 折线图展示观众变化趋势，标记峰值点 |
+| Hot keywords / 热门词汇 | Auto-extracted high-frequency words from comments / 从评论中自动提取高频词汇 |
+| Top contributors / 贡献榜 | Gift leaderboard with coin counts / 礼物打赏排行榜，显示打赏金额 |
+| Live comments / 最近评论 | Scrolling comment feed with avatars / 评论实时滚动流，含头像和昵称 |
+| Export buttons / 导出按钮 | Copy summary, HTML report, Excel, JSON / 复制摘要、HTML 报告、Excel、JSON 四种导出 |
+
+### Session History / 采集历史
+
+<img src="screenshots/03-history.png" width="360" alt="Session history with export">
+
+| Feature / 功能 | Description / 说明 |
+|---|---|
+| Session cards / 会话卡片 | Each live stream as a card with username, time, duration, stats / 每场直播一张卡片，显示用户名、时间、时长、数据 |
+| Status badge / 状态标签 | Active (green) or Completed (gray) / 采集中（绿色）或已完成（灰色）|
+| Export per session / 按会话导出 | HTML report, Excel (.xlsx), JSON for each session / 每个会话独立导出为 HTML 报告、Excel、JSON |
+| Stop / Delete / 停止/删除 | Stop active session or delete completed ones / 停止采集中的会话，或删除已完成的会话 |
+| Clear all / 清空全部 | Remove all history data / 一键清空所有历史数据 |
+
+## Features / 功能一览
+
+| Category / 类别 | Feature / 功能 | Details / 详情 |
+|---|---|---|
+| Data Collection / 数据采集 | Comments / 评论 | User ID, username, nickname, content, timestamp |
+| | Gifts / 礼物 | Gift name, repeat count, diamond value |
+| | Likes / 点赞 | Like count, total likes |
+| | Viewers / 观众 | Real-time count, top viewer leaderboard |
+| | Follows / 关注 | New follower events |
+| | Shares / 分享 | Share events |
+| Storage / 存储 | IndexedDB | 7 tables via Dexie.js, survives browser restart / 7 张表，浏览器重启不丢数据 |
+| | Session-based / 按会话 | Each stream is a separate session / 每场直播独立存储 |
+| Export / 导出 | JSON | Full raw data export / 完整原始数据 |
+| | Excel (.xlsx) | Formatted spreadsheet with multiple sheets / 多 Sheet 格式化表格 |
+| | HTML Report | Self-contained report with embedded Chart.js / 自包含报告，内嵌图表 |
+| | Copy Summary | One-click clipboard summary / 一键复制直播摘要到剪贴板 |
+| UI / 界面 | Dark / Light mode | Theme toggle with persistence / 深色/浅色主题切换，自动保存 |
+| | Bento grid stats | Dashboard-style stat cards / 仪表盘风格数据卡片 |
+| | Word cloud / 热词 | Auto-extracted hot keywords / 自动提取评论热词 |
+| Security / 安全 | Origin validation | Only localhost + chrome-extension / 仅允许本地和扩展来源 |
+| | Input sanitization | HTML escape + username regex / HTML 转义 + 用户名正则验证 |
+| | wsUrl whitelist | Only ws(s)://localhost or 127.0.0.1 / WebSocket 地址白名单 |
 
 ## Architecture / 架构
 
