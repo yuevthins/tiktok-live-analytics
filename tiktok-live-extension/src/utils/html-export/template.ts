@@ -460,11 +460,12 @@ function generateGiftsTable(gifts: Gift[]): string {
  * 生成转化事件表格 HTML（follows + shares + subscribes）
  */
 function generateEventsTable(follows: Follow[], shares: Share[], subscribes: Subscribe[]): string {
-  type EventRow = { time: string; type: string; user: string; nickname: string; detail: string };
+  type EventRow = { time: string; sortKey: number; type: string; user: string; nickname: string; detail: string };
   const events: EventRow[] = [];
 
   follows.forEach(f => events.push({
     time: formatTime(f.timestamp),
+    sortKey: new Date(f.timestamp).getTime(),
     type: 'FOLLOW',
     user: f.uniqueId,
     nickname: f.nickname,
@@ -472,6 +473,7 @@ function generateEventsTable(follows: Follow[], shares: Share[], subscribes: Sub
   }));
   shares.forEach(s => events.push({
     time: formatTime(s.timestamp),
+    sortKey: new Date(s.timestamp).getTime(),
     type: 'SHARE',
     user: s.uniqueId,
     nickname: s.nickname,
@@ -479,6 +481,7 @@ function generateEventsTable(follows: Follow[], shares: Share[], subscribes: Sub
   }));
   subscribes.forEach(s => events.push({
     time: formatTime(s.timestamp),
+    sortKey: new Date(s.timestamp).getTime(),
     type: 'SUBSCRIBE',
     user: s.uniqueId,
     nickname: s.nickname,
@@ -493,7 +496,8 @@ function generateEventsTable(follows: Follow[], shares: Share[], subscribes: Sub
           </div>`;
   }
 
-  // 按时间排序（原始数据已有 timestamp 用于排序）
+  // 按时间排序
+  events.sort((a, b) => a.sortKey - b.sortKey);
   const rows = events.map(e => `
                 <tr>
                   <td class="col-time">${e.time}</td>

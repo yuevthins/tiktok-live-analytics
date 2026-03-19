@@ -1,16 +1,17 @@
 /**
- * TikTok 直播评论采集服务 v2.2
+ * TikTok 直播评论采集服务 v2.3
  *
  * 功能：
  * - 广播事件：comment, roomUser, gift, like, member, follow, share, subscribe
  * - 打赏榜 Top 用户 (topViewers)
  * - 连接冲突保护
  * - 支持后台持续采集
+ * - AUTH_TOKEN 连接验证（扩展通过 /token 端点自动获取）
  *
  * 使用方法：
  * 1. node server.js
- * 2. 在浏览器访问 http://localhost:3456
- * 3. Chrome 扩展连接 ws://localhost:3456
+ * 2. 在浏览器访问 http://127.0.0.1:3456
+ * 3. Chrome 扩展自动连接 ws://127.0.0.1:3456?token=xxx
  */
 
 const { WebcastPushConnection } = require('tiktok-live-connector');
@@ -52,6 +53,9 @@ const httpServer = http.createServer((req, res) => {
       startTime: connectionStartTime,
       clients: clients.size,
     }));
+  } else if (req.url === '/token') {
+    // 扩展自动获取 token（受 origin 检查保护）
+    res.end(JSON.stringify({ token: AUTH_TOKEN }));
   } else if (req.url === '/') {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     // 使用 escapeHtml 防止 XSS
@@ -70,10 +74,10 @@ const httpServer = http.createServer((req, res) => {
           </style>
         </head>
         <body>
-          <h1>🎵 TikTok Live Server v2.2</h1>
+          <h1>🎵 TikTok Live Server v2.3</h1>
           <div class="status ${currentConnection ? 'connected' : 'disconnected'}">
             <p><strong>状态:</strong> ${currentConnection ? '✅ 已连接 @' + safeUsername : '❌ 未连接'}</p>
-            <p><strong>WebSocket:</strong> ws://localhost:${PORT}</p>
+            <p><strong>WebSocket:</strong> ws://127.0.0.1:${PORT}?token=...</p>
             <p><strong>客户端数:</strong> ${clients.size}</p>
           </div>
         </body>

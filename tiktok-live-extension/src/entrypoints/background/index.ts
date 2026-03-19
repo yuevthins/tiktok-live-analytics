@@ -581,13 +581,35 @@ function resetState() {
 
 let wsPingTimer: ReturnType<typeof setInterval> | null = null;
 
-function connectToServer() {
+async function fetchAuthToken(): Promise<string | null> {
+  try {
+    // 从 wsUrl 推导 HTTP 地址获取 token
+    const url = new URL(wsUrl);
+    const httpUrl = `http://${url.hostname}:${url.port}/token`;
+    const res = await fetch(httpUrl);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.token || null;
+  } catch {
+    return null;
+  }
+}
+
+async function connectToServer() {
   if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) {
     return;
   }
 
   try {
-    ws = new WebSocket(wsUrl);
+    // 自动获取 AUTH_TOKEN 并拼接到 WS URL
+    let connectUrl = wsUrl;
+    const token = await fetchAuthToken();
+    if (token) {
+      const url = new URL(wsUrl);
+      url.searchParams.set('token', token);
+      connectUrl = url.toString();
+    }
+    ws = new WebSocket(connectUrl);
     shouldReconnect = true;
 
     ws.onopen = () => {

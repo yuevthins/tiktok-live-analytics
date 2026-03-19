@@ -104,6 +104,7 @@ Popup UI (Vue 3)         IndexedDB (Dexie.js)
 
 ### 服务器安全
 
+- AUTH_TOKEN：服务器启动时生成随机 token，扩展通过 `GET /token` 端点自动获取后拼接到 WS URL
 - 用户名验证：`/^[a-zA-Z0-9_.]{1,24}$/`
 - Origin 白名单：`chrome-extension://`, `localhost`, `127.0.0.1`
 - HTML 转义防 XSS
