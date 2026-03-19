@@ -4,7 +4,7 @@
 
 import { CSS_STYLES } from './styles';
 import { generateChartScript, type ViewerDataPoint } from './chart-config';
-import type { Comment, Gift } from '../../types';
+import type { Comment, Gift, Follow, Share, Subscribe } from '../../types';
 import type { WordCount } from '../word-stats';
 
 export interface HtmlExportData {
@@ -20,11 +20,17 @@ export interface HtmlExportData {
     totalGifts: number;
     totalDiamonds: number;
     totalLikes: number;
+    totalFollows: number;
+    totalShares: number;
+    totalSubscribes: number;
     peakViewers: number;
     avgViewers: number;
   };
   comments: Comment[];
   gifts: Gift[];
+  follows: Follow[];
+  shares: Share[];
+  subscribes: Subscribe[];
   viewerCounts: ViewerDataPoint[];
   hotWords: WordCount[];
   chartjsCode: string;
@@ -178,6 +184,30 @@ function generateStatsGrid(stats: HtmlExportData['statistics'], duration: number
         </div>
         <div class="stat-value">${formatNumber(stats.avgViewers)}</div>
         <div class="stat-sub">${retention}% retention</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">
+          <span class="stat-label-icon">+</span>
+          FOLLOWS
+        </div>
+        <div class="stat-value">${formatNumber(stats.totalFollows)}</div>
+        <div class="stat-sub">New followers</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">
+          <span class="stat-label-icon">⇗</span>
+          SHARES
+        </div>
+        <div class="stat-value">${formatNumber(stats.totalShares)}</div>
+        <div class="stat-sub">Stream shares</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">
+          <span class="stat-label-icon">★</span>
+          SUBSCRIBES
+        </div>
+        <div class="stat-value">${formatNumber(stats.totalSubscribes)}</div>
+        <div class="stat-sub">Paid subscribers</div>
       </div>
     </div>`;
 }
@@ -427,6 +457,75 @@ function generateGiftsTable(gifts: Gift[]): string {
 }
 
 /**
+ * 生成转化事件表格 HTML（follows + shares + subscribes）
+ */
+function generateEventsTable(follows: Follow[], shares: Share[], subscribes: Subscribe[]): string {
+  type EventRow = { time: string; type: string; user: string; nickname: string; detail: string };
+  const events: EventRow[] = [];
+
+  follows.forEach(f => events.push({
+    time: formatTime(f.timestamp),
+    type: 'FOLLOW',
+    user: f.uniqueId,
+    nickname: f.nickname,
+    detail: '',
+  }));
+  shares.forEach(s => events.push({
+    time: formatTime(s.timestamp),
+    type: 'SHARE',
+    user: s.uniqueId,
+    nickname: s.nickname,
+    detail: '',
+  }));
+  subscribes.forEach(s => events.push({
+    time: formatTime(s.timestamp),
+    type: 'SUBSCRIBE',
+    user: s.uniqueId,
+    nickname: s.nickname,
+    detail: `${s.subMonth} months`,
+  }));
+
+  if (events.length === 0) {
+    return `
+          <div class="empty-state">
+            <div class="empty-icon">+</div>
+            <div class="empty-text">No conversion events in this session</div>
+          </div>`;
+  }
+
+  // 按时间排序（原始数据已有 timestamp 用于排序）
+  const rows = events.map(e => `
+                <tr>
+                  <td class="col-time">${e.time}</td>
+                  <td><span class="col-gift">${e.type}</span></td>
+                  <td>
+                    <div class="col-user">
+                      <div class="user-avatar">${(e.nickname || e.user).charAt(0).toUpperCase()}</div>
+                      <span class="user-name">${escapeHtml(e.nickname || e.user)}</span>
+                    </div>
+                  </td>
+                  <td>${e.detail ? escapeHtml(e.detail) : ''}</td>
+                </tr>`).join('');
+
+  return `
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width:90px">TIME</th>
+                  <th style="width:100px">TYPE</th>
+                  <th style="width:180px">USER</th>
+                  <th>DETAIL</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </div>`;
+}
+
+/**
  * 生成完整的 HTML 报告
  */
 export function generateHtmlReport(data: HtmlExportData): string {
@@ -529,6 +628,9 @@ export function generateHtmlReport(data: HtmlExportData): string {
           <button class="tab-btn" onclick="switchTab('gifts')">
             ◇ GIFTS<span class="tab-count">${data.gifts.length}</span>
           </button>
+          <button class="tab-btn" onclick="switchTab('events')">
+            + EVENTS<span class="tab-count">${data.follows.length + data.shares.length + data.subscribes.length}</span>
+          </button>
         </div>
 
         <div id="tab-comments" class="tab-content active">
@@ -537,6 +639,10 @@ export function generateHtmlReport(data: HtmlExportData): string {
 
         <div id="tab-gifts" class="tab-content">
           ${generateGiftsTable(data.gifts)}
+        </div>
+
+        <div id="tab-events" class="tab-content">
+          ${generateEventsTable(data.follows, data.shares, data.subscribes)}
         </div>
       </div>
 

@@ -109,6 +109,10 @@ export interface WsStreamEndMessage {
   type: 'streamEnd';
 }
 
+export interface WsPongMessage {
+  type: 'pong';
+}
+
 export type WsMessage =
   | WsStatusMessage
   | WsConnectedMessage
@@ -122,7 +126,8 @@ export type WsMessage =
   | WsMemberMessage
   | WsFollowMessage
   | WsShareMessage
-  | WsSubscribeMessage;
+  | WsSubscribeMessage
+  | WsPongMessage;
 
 // 数据库模型
 export interface Session {
@@ -131,8 +136,9 @@ export interface Session {
   roomId: string;
   startTime: Date;
   endTime?: Date;
-  status: 'active' | 'completed' | 'error';
-  totalLikes?: number; // P1: 持久化点赞数
+  status: 'active' | 'completed' | 'error' | 'interrupted';
+  disconnectReason?: 'streamEnd' | 'userDisconnect' | 'transportError' | 'timeout';
+  totalLikes?: number;
 }
 
 export interface Comment {
@@ -143,6 +149,9 @@ export interface Comment {
   username: string;
   nickname: string;
   content: string;
+  followRole?: number;
+  isModerator?: boolean;
+  isSubscriber?: boolean;
   timestamp: Date;
 }
 
@@ -202,6 +211,13 @@ export interface Subscribe {
   uniqueId: string;
   nickname: string;
   subMonth: number;
+  timestamp: Date;
+}
+
+export interface Like {
+  id?: number;
+  sessionId: number;
+  totalLikeCount: number;
   timestamp: Date;
 }
 

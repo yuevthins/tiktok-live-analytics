@@ -56,10 +56,13 @@ export async function exportToHtml(sessionId: number): Promise<void> {
   }
 
   // 并行获取所有数据
-  const [comments, gifts, viewerCounts, stats] = await Promise.all([
+  const [comments, gifts, viewerCounts, follows, shares, subscribes, stats] = await Promise.all([
     dbHelper.getCommentsBySession(sessionId),
     dbHelper.getGiftsBySession(sessionId),
     dbHelper.getViewerCountsBySession(sessionId),
+    dbHelper.getFollowsBySession(sessionId),
+    dbHelper.getSharesBySession(sessionId),
+    dbHelper.getSubscribesBySession(sessionId),
     dbHelper.getSessionStats(sessionId),
   ]);
 
@@ -97,6 +100,9 @@ export async function exportToHtml(sessionId: number): Promise<void> {
     },
     comments: comments as Comment[],
     gifts: gifts as Gift[],
+    follows,
+    shares,
+    subscribes,
     viewerCounts: viewerCounts.map(v => ({
       timestamp: new Date(v.timestamp).toISOString(),
       count: v.count,

@@ -300,10 +300,15 @@ async function exportExcel() {
     const session = await dbHelper.getSession(sessionId);
     if (!session) return;
 
-    const comments = await dbHelper.getCommentsBySession(sessionId);
-    const gifts = await dbHelper.getGiftsBySession(sessionId);
-    const viewerCounts = await dbHelper.getViewerCountsBySession(sessionId);
-    const stats = await dbHelper.getSessionStats(sessionId);
+    const [comments, gifts, viewerCounts, follows, shares, subscribes, stats] = await Promise.all([
+      dbHelper.getCommentsBySession(sessionId),
+      dbHelper.getGiftsBySession(sessionId),
+      dbHelper.getViewerCountsBySession(sessionId),
+      dbHelper.getFollowsBySession(sessionId),
+      dbHelper.getSharesBySession(sessionId),
+      dbHelper.getSubscribesBySession(sessionId),
+      dbHelper.getSessionStats(sessionId),
+    ]);
 
     const endTime = session.endTime || new Date();
     const duration = Math.round((new Date(endTime).getTime() - new Date(session.startTime).getTime()) / 1000);
@@ -325,6 +330,9 @@ async function exportExcel() {
       comments,
       gifts,
       viewerCounts,
+      follows,
+      shares,
+      subscribes,
     }, filename);
   } catch (e) {
     console.error('Excel export failed:', e);

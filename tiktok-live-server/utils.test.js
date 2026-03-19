@@ -17,10 +17,10 @@ describe('isAllowedOrigin', () => {
     expect(isAllowedOrigin('http://127.0.0.1:3456')).toBe(true);
   });
 
-  it('allows missing origin (local process)', () => {
-    expect(isAllowedOrigin(undefined)).toBe(true);
-    expect(isAllowedOrigin(null)).toBe(true);
-    expect(isAllowedOrigin('')).toBe(true);
+  it('rejects missing origin by default (non-debug)', () => {
+    expect(isAllowedOrigin(undefined)).toBe(false);
+    expect(isAllowedOrigin(null)).toBe(false);
+    expect(isAllowedOrigin('')).toBe(false);
   });
 
   it('rejects external origins', () => {

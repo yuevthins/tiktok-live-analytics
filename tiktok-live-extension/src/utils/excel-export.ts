@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { Comment, Gift, ViewerCount } from '../types';
+import type { Comment, Gift, ViewerCount, Follow, Share, Subscribe } from '../types';
 
 interface ExcelExportData {
   sessionInfo: {
@@ -14,12 +14,18 @@ interface ExcelExportData {
     totalGifts: number;
     totalDiamonds: number;
     totalLikes: number;
+    totalFollows: number;
+    totalShares: number;
+    totalSubscribes: number;
     peakViewers: number;
     avgViewers: number;
   };
   comments: Comment[];
   gifts: Gift[];
   viewerCounts: ViewerCount[];
+  follows: Follow[];
+  shares: Share[];
+  subscribes: Subscribe[];
 }
 
 export function exportToExcel(data: ExcelExportData, filename: string): void {
@@ -41,6 +47,9 @@ export function exportToExcel(data: ExcelExportData, filename: string): void {
     ['总礼物数', data.statistics.totalGifts],
     ['总钻石数', data.statistics.totalDiamonds],
     ['总点赞数', data.statistics.totalLikes],
+    ['总关注数', data.statistics.totalFollows],
+    ['总分享数', data.statistics.totalShares],
+    ['总订阅数', data.statistics.totalSubscribes],
     ['峰值观众', data.statistics.peakViewers],
     ['平均观众', data.statistics.avgViewers],
   ];
@@ -102,6 +111,43 @@ export function exportToExcel(data: ExcelExportData, filename: string): void {
       { wch: 10 },  // 观众数
     ];
     XLSX.utils.book_append_sheet(wb, wsViewers, '观众数');
+  }
+
+  // Sheet 5: 关注
+  if (data.follows.length > 0) {
+    const followRows = data.follows.map(f => ({
+      '时间': formatTime(f.timestamp),
+      '用户名': f.uniqueId,
+      '昵称': f.nickname,
+    }));
+    const wsFollows = XLSX.utils.json_to_sheet(followRows);
+    wsFollows['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsFollows, '关注');
+  }
+
+  // Sheet 6: 分享
+  if (data.shares.length > 0) {
+    const shareRows = data.shares.map(s => ({
+      '时间': formatTime(s.timestamp),
+      '用户名': s.uniqueId,
+      '昵称': s.nickname,
+    }));
+    const wsShares = XLSX.utils.json_to_sheet(shareRows);
+    wsShares['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsShares, '分享');
+  }
+
+  // Sheet 7: 订阅
+  if (data.subscribes.length > 0) {
+    const subscribeRows = data.subscribes.map(s => ({
+      '时间': formatTime(s.timestamp),
+      '用户名': s.uniqueId,
+      '昵称': s.nickname,
+      '订阅月数': s.subMonth,
+    }));
+    const wsSubscribes = XLSX.utils.json_to_sheet(subscribeRows);
+    wsSubscribes['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, wsSubscribes, '订阅');
   }
 
   // 生成并下载

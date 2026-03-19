@@ -76,6 +76,9 @@ let commentBuffer: Array<{
   username: string;
   nickname: string;
   content: string;
+  followRole?: number;
+  isModerator?: boolean;
+  isSubscriber?: boolean;
   timestamp: number;
 }> = [];
 let giftBuffer: Array<{
@@ -91,7 +94,9 @@ let viewerCountBuffer: Array<{ count: number; topViewers?: Array<{ uniqueId: str
 let followBuffer: Array<{ uniqueId: string; nickname: string; timestamp: number }> = [];
 let shareBuffer: Array<{ uniqueId: string; nickname: string; timestamp: number }> = [];
 let subscribeBuffer: Array<{ uniqueId: string; nickname: string; subMonth: number; timestamp: number }> = [];
+let likeBuffer: Array<{ totalLikeCount: number; timestamp: number }> = [];
 let flushTimerActive = false;
+let flushIntervalId: ReturnType<typeof setInterval> | null = null;
 const BUFFER_SIZE = 50;
 
 // 广播状态给所有 popup
@@ -114,6 +119,9 @@ async function flushBuffers() {
       username: c.username,
       nickname: c.nickname,
       content: c.content,
+      followRole: c.followRole,
+      isModerator: c.isModerator,
+      isSubscriber: c.isSubscriber,
       timestamp: new Date(c.timestamp),
     }));
     // P0: 先保存引用，成功后再清空，避免数据丢失
@@ -140,7 +148,7 @@ async function flushBuffers() {
     }
   }
 
-  // 批量写入礼物
+  // 批量写入礼物（B4: 失败时逐条重试）
   if (giftBuffer.length > 0) {
     const gifts = giftBuffer.map(g => ({
       sessionId,
@@ -152,15 +160,23 @@ async function flushBuffers() {
       diamondCount: g.diamondCount,
       timestamp: new Date(g.timestamp),
     }));
-    // P0: 先保存引用，成功后再清空
     const toFlush = [...giftBuffer];
 
     try {
       await db.gifts.bulkAdd(gifts);
       giftBuffer = giftBuffer.filter(g => !toFlush.includes(g));
     } catch (e) {
-      console.error('[Background] Failed to bulk add gifts:', e);
-      // 保留失败的数据，下次重试
+      console.warn('[Background] Bulk add gifts failed, trying one by one:', e);
+      const succeeded = new Set<typeof toFlush[number]>();
+      for (let i = 0; i < gifts.length; i++) {
+        try {
+          await db.gifts.add(gifts[i]);
+          succeeded.add(toFlush[i]);
+        } catch (innerErr) {
+          console.error('[Background] Failed to add gift:', innerErr);
+        }
+      }
+      giftBuffer = giftBuffer.filter(g => !succeeded.has(g));
     }
   }
 
@@ -184,7 +200,7 @@ async function flushBuffers() {
     }
   }
 
-  // 批量写入关注
+  // 批量写入关注（B4: 失败时逐条重试）
   if (followBuffer.length > 0) {
     const follows = followBuffer.map(f => ({
       sessionId,
@@ -197,11 +213,21 @@ async function flushBuffers() {
       await db.follows.bulkAdd(follows);
       followBuffer = followBuffer.filter(f => !toFlush.includes(f));
     } catch (e) {
-      console.error('[Background] Failed to bulk add follows:', e);
+      console.warn('[Background] Bulk add follows failed, trying one by one:', e);
+      const succeeded = new Set<typeof toFlush[number]>();
+      for (let i = 0; i < follows.length; i++) {
+        try {
+          await db.follows.add(follows[i]);
+          succeeded.add(toFlush[i]);
+        } catch (innerErr) {
+          console.error('[Background] Failed to add follow:', innerErr);
+        }
+      }
+      followBuffer = followBuffer.filter(f => !succeeded.has(f));
     }
   }
 
-  // 批量写入分享
+  // 批量写入分享（B4: 失败时逐条重试）
   if (shareBuffer.length > 0) {
     const shares = shareBuffer.map(s => ({
       sessionId,
@@ -214,11 +240,21 @@ async function flushBuffers() {
       await db.shares.bulkAdd(shares);
       shareBuffer = shareBuffer.filter(s => !toFlush.includes(s));
     } catch (e) {
-      console.error('[Background] Failed to bulk add shares:', e);
+      console.warn('[Background] Bulk add shares failed, trying one by one:', e);
+      const succeeded = new Set<typeof toFlush[number]>();
+      for (let i = 0; i < shares.length; i++) {
+        try {
+          await db.shares.add(shares[i]);
+          succeeded.add(toFlush[i]);
+        } catch (innerErr) {
+          console.error('[Background] Failed to add share:', innerErr);
+        }
+      }
+      shareBuffer = shareBuffer.filter(s => !succeeded.has(s));
     }
   }
 
-  // 批量写入订阅
+  // 批量写入订阅（B4: 失败时逐条重试）
   if (subscribeBuffer.length > 0) {
     const subscribes = subscribeBuffer.map(s => ({
       sessionId,
@@ -232,7 +268,33 @@ async function flushBuffers() {
       await db.subscribes.bulkAdd(subscribes);
       subscribeBuffer = subscribeBuffer.filter(s => !toFlush.includes(s));
     } catch (e) {
-      console.error('[Background] Failed to bulk add subscribes:', e);
+      console.warn('[Background] Bulk add subscribes failed, trying one by one:', e);
+      const succeeded = new Set<typeof toFlush[number]>();
+      for (let i = 0; i < subscribes.length; i++) {
+        try {
+          await db.subscribes.add(subscribes[i]);
+          succeeded.add(toFlush[i]);
+        } catch (innerErr) {
+          console.error('[Background] Failed to add subscribe:', innerErr);
+        }
+      }
+      subscribeBuffer = subscribeBuffer.filter(s => !succeeded.has(s));
+    }
+  }
+
+  // B5: 批量写入点赞
+  if (likeBuffer.length > 0) {
+    const likes = likeBuffer.map(l => ({
+      sessionId,
+      totalLikeCount: l.totalLikeCount,
+      timestamp: new Date(l.timestamp),
+    }));
+    const toFlush = [...likeBuffer];
+    try {
+      await db.likes.bulkAdd(likes);
+      likeBuffer = likeBuffer.filter(l => !toFlush.includes(l));
+    } catch (e) {
+      console.error('[Background] Failed to bulk add likes:', e);
     }
   }
 }
@@ -240,12 +302,17 @@ async function flushBuffers() {
 function startFlushTimer() {
   if (flushTimerActive) return;
   flushTimerActive = true;
-  // MV3: 使用 chrome.alarms 替代 setInterval，Service Worker 休眠时 alarm 仍会触发
-  chrome.alarms.create('flushBuffers', { periodInMinutes: 0.05 }); // ~3 seconds
+  // B2: setInterval 做主力（3s），alarm 做兜底唤醒（30s）
+  flushIntervalId = setInterval(() => flushBuffers(), 3000);
+  chrome.alarms.create('flushBuffers', { periodInMinutes: 0.5 }); // 兜底唤醒
 }
 
 function stopFlushTimer() {
   if (flushTimerActive) {
+    if (flushIntervalId) {
+      clearInterval(flushIntervalId);
+      flushIntervalId = null;
+    }
     chrome.alarms.clear('flushBuffers');
     flushTimerActive = false;
   }
@@ -299,8 +366,14 @@ async function handleWsMessage(message: WsMessage, shouldBuffer = true) {
       break;
 
     case 'disconnected':
+      // B6: 如果在等 ACK，由 onmessage 处理，这里不重复
+      if (!awaitingDisconnectAck) {
+        await handleDisconnect(undefined, 'userDisconnect');
+      }
+      break;
+
     case 'streamEnd':
-      await handleDisconnect();
+      await handleDisconnect(undefined, 'streamEnd');
       break;
 
     case 'error':
@@ -316,6 +389,9 @@ async function handleWsMessage(message: WsMessage, shouldBuffer = true) {
           username: message.username,
           nickname: message.nickname,
           content: message.comment,
+          followRole: message.followRole,
+          isModerator: message.isModerator,
+          isSubscriber: message.isSubscriber,
           timestamp: message.timestamp,
         });
         state.commentCount++;
@@ -359,7 +435,17 @@ async function handleWsMessage(message: WsMessage, shouldBuffer = true) {
 
     case 'like':
       if (state.currentSessionId) {
-        state.likeCount += message.likeCount;
+        // B5: 优先用 totalLikeCount（绝对值），回退增量累加
+        if (message.totalLikeCount) {
+          state.likeCount = message.totalLikeCount;
+        } else {
+          state.likeCount += message.likeCount;
+        }
+        // B5: 写入 likes 表
+        likeBuffer.push({
+          totalLikeCount: state.likeCount,
+          timestamp: message.timestamp,
+        });
       }
       break;
 
@@ -425,22 +511,34 @@ async function handleWsMessage(message: WsMessage, shouldBuffer = true) {
 }
 
 let isDisconnecting = false; // 防止 onerror+onclose 双重触发
+let awaitingDisconnectAck = false; // B6: 断开 ACK
+let disconnectAckTimer: ReturnType<typeof setTimeout> | null = null;
 
-async function handleDisconnect(sessionId?: number) {
+async function handleDisconnect(
+  sessionId?: number,
+  reason: 'streamEnd' | 'userDisconnect' | 'transportError' | 'timeout' = 'userDisconnect',
+) {
   // 防重入守卫：onerror 和 onclose 几乎同时触发时，只执行一次
   if (isDisconnecting && !sessionId) return;
   isDisconnecting = true;
+
+  // B6: 清除 ACK 等待
+  awaitingDisconnectAck = false;
+  if (disconnectAckTimer) {
+    clearTimeout(disconnectAckTimer);
+    disconnectAckTimer = null;
+  }
 
   try {
     await flushBuffers();
     stopFlushTimer();
 
-    // 优先使用传入的 sessionId，否则使用当前会话
     const targetSessionId = sessionId || state.currentSessionId;
 
     if (targetSessionId) {
-      // P1: 保存点赞数到 session
-      await dbHelper.endSession(targetSessionId, 'completed', state.likeCount);
+      // B3: transport 断开不结算，标 interrupted
+      const status = reason === 'transportError' ? 'interrupted' as const : 'completed' as const;
+      await dbHelper.endSession(targetSessionId, status, state.likeCount, reason);
     }
 
     resetState();
@@ -476,9 +574,12 @@ function resetState() {
   followBuffer = [];
   shareBuffer = [];
   subscribeBuffer = [];
+  likeBuffer = [];
   recentComments = [];
   recentCommentsDetail = [];
 }
+
+let wsPingTimer: ReturnType<typeof setInterval> | null = null;
 
 function connectToServer() {
   if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) {
@@ -493,14 +594,21 @@ function connectToServer() {
       console.log('[Background] WebSocket connected');
       state.status = 'disconnected';
       broadcastState();
+      // B2: 每 25s 发 ping 保持连接
+      wsPingTimer = setInterval(() => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: 'ping' }));
+        }
+      }, 25000);
     };
 
     ws.onclose = async () => {
       console.log('[Background] WebSocket closed');
-      // P0: 如果有活跃 session，先正确结束它
+      if (wsPingTimer) { clearInterval(wsPingTimer); wsPingTimer = null; }
+      // B3: transport 断开 → 标 interrupted，不结算
       if (state.currentSessionId) {
-        console.warn('[Background] WebSocket closed with active session, ending session');
-        await handleDisconnect();
+        console.warn('[Background] WebSocket closed with active session, marking interrupted');
+        await handleDisconnect(undefined, 'transportError');
       } else {
         state.status = 'server_offline';
         broadcastState();
@@ -513,10 +621,11 @@ function connectToServer() {
 
     ws.onerror = async (error) => {
       console.error('[Background] WebSocket error:', error);
-      // P0: 如果有活跃 session，先正确结束它
+      if (wsPingTimer) { clearInterval(wsPingTimer); wsPingTimer = null; }
+      // B3: transport 错误 → 标 interrupted
       if (state.currentSessionId) {
-        console.warn('[Background] WebSocket error with active session, ending session');
-        await handleDisconnect();
+        console.warn('[Background] WebSocket error with active session, marking interrupted');
+        await handleDisconnect(undefined, 'transportError');
       } else {
         state.status = 'server_offline';
         broadcastState();
@@ -526,6 +635,13 @@ function connectToServer() {
     ws.onmessage = async (event) => {
       try {
         const message = JSON.parse(event.data) as WsMessage;
+        // B6: 收到 disconnected ACK → 执行 endSession
+        if (message.type === 'disconnected' && awaitingDisconnectAck) {
+          await handleDisconnect(undefined, 'userDisconnect');
+          return;
+        }
+        // B2: pong 不需要处理
+        if (message.type === 'pong') return;
         await handleWsMessage(message);
       } catch (e) {
         console.error('[Background] Failed to parse message:', e);
@@ -544,6 +660,10 @@ function disconnectFromServer() {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
+  }
+  if (wsPingTimer) {
+    clearInterval(wsPingTimer);
+    wsPingTimer = null;
   }
   if (ws) {
     ws.close();
@@ -576,8 +696,17 @@ function connectToLive(username: string) {
 async function disconnectFromLive(sessionId?: number) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ action: 'disconnect' }));
+    // B6: 等待服务器 ACK，3s 超时兜底
+    awaitingDisconnectAck = true;
+    disconnectAckTimer = setTimeout(async () => {
+      if (awaitingDisconnectAck) {
+        console.warn('[Background] Disconnect ACK timeout (3s), force ending session');
+        await handleDisconnect(sessionId, 'timeout');
+      }
+    }, 3000);
+    return; // 等 ACK 或超时再 endSession
   }
-  await handleDisconnect(sessionId);
+  await handleDisconnect(sessionId, 'userDisconnect');
 }
 
 async function exportSession(): Promise<string | null> {
@@ -654,10 +783,42 @@ async function exportSession(): Promise<string | null> {
 }
 
 export default defineBackground(() => {
-  console.log('TikTok Live Extension Background Script v2.2 loaded');
+  console.log('TikTok Live Extension Background Script v2.3 loaded');
 
-  // 加载配置后连接服务器
-  loadConfig().then(() => {
+  // B3: SW 启动时恢复活跃 session
+  async function recoverActiveSession() {
+    try {
+      const activeSession = await dbHelper.getActiveSession();
+      if (activeSession && activeSession.id) {
+        console.log('[Background] Recovering active session:', activeSession.id);
+        state.currentSessionId = activeSession.id;
+        state.username = activeSession.username;
+        state.roomId = activeSession.roomId;
+        state.startTime = activeSession.startTime.getTime();
+        state.status = 'connected';
+        isSessionReady = true;
+
+        // 恢复统计计数
+        const stats = await dbHelper.getSessionStats(activeSession.id);
+        state.commentCount = stats.totalComments;
+        state.giftCount = stats.totalGifts;
+        state.followCount = stats.totalFollows;
+        state.shareCount = stats.totalShares;
+        state.subscribeCount = stats.totalSubscribes;
+        state.likeCount = activeSession.totalLikes || 0;
+        state.viewerCount = stats.peakViewers;
+
+        startFlushTimer();
+        broadcastState();
+      }
+    } catch (e) {
+      console.error('[Background] Failed to recover active session:', e);
+    }
+  }
+
+  // 加载配置后恢复 session + 连接服务器
+  loadConfig().then(async () => {
+    await recoverActiveSession();
     connectToServer();
   });
 

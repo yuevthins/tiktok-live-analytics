@@ -26,13 +26,20 @@ function isValidUsername(username) {
 
 /**
  * 验证请求来源（允许 Chrome 扩展和本地访问）
+ * - 无 origin 默认拒绝（除非 --debug 模式）
+ * - 支持 ALLOWED_EXTENSION_ID 环境变量精确匹配扩展 ID
  */
 function isAllowedOrigin(origin) {
-  if (!origin) return true; // 本地直接连接（如 Node.js 客户端）
-  // 允许 Chrome 扩展和本地页面（精确匹配 hostname，防止 localhost.evil.com bypass）
+  const debugMode = process.argv.includes('--debug');
+  if (!origin) return debugMode; // 无 origin 仅 debug 模式放行
   try {
     const url = new URL(origin);
-    if (url.protocol === 'chrome-extension:') return true;
+    // Chrome 扩展：支持 ALLOWED_EXTENSION_ID 环境变量精确匹配
+    if (url.protocol === 'chrome-extension:') {
+      const allowedId = process.env.ALLOWED_EXTENSION_ID;
+      if (allowedId) return url.hostname === allowedId;
+      return true; // 未配置则放行所有扩展
+    }
     return (url.hostname === 'localhost' || url.hostname === '127.0.0.1') &&
            (url.protocol === 'http:' || url.protocol === 'https:');
   } catch {

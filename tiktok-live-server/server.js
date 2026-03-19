@@ -16,9 +16,11 @@
 const { WebcastPushConnection } = require('tiktok-live-connector');
 const WebSocket = require('ws');
 const http = require('http');
+const crypto = require('crypto');
 const { escapeHtml, isValidUsername, isAllowedOrigin } = require('./utils');
 
 const PORT = 3456;
+const AUTH_TOKEN = crypto.randomUUID();
 
 // 存储所有连接的客户端
 const clients = new Set();
@@ -27,6 +29,10 @@ const clients = new Set();
 let currentConnection = null;
 let currentUsername = null;
 let isConnecting = false;
+let currentConnectionToken = null;
+let currentRoomId = null;
+let currentViewerCount = 0;
+let connectionStartTime = null;
 
 // 创建 HTTP 服务器（用于状态查询）
 const httpServer = http.createServer((req, res) => {
@@ -41,6 +47,9 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       connected: currentConnection !== null,
       username: currentUsername,
+      roomId: currentRoomId,
+      viewerCount: currentViewerCount,
+      startTime: connectionStartTime,
       clients: clients.size,
     }));
   } else if (req.url === '/') {
@@ -88,14 +97,25 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
+  // 校验 AUTH_TOKEN
+  const reqUrl = new URL(req.url, 'ws://localhost');
+  if (reqUrl.searchParams.get('token') !== AUTH_TOKEN) {
+    console.warn('[WS] 拒绝无效 token');
+    ws.close(4003, 'Invalid token');
+    return;
+  }
+
   console.log('[WS] 新客户端连接, origin:', origin || 'local');
   clients.add(ws);
 
-  // 发送当前状态
+  // 发送当前状态（含 roomId/viewerCount/startTime）
   ws.send(JSON.stringify({
     type: 'status',
     connected: currentConnection !== null,
     username: currentUsername,
+    roomId: currentRoomId,
+    viewerCount: currentViewerCount,
+    startTime: connectionStartTime,
   }));
 
   ws.on('message', async (data) => {
@@ -117,6 +137,9 @@ wss.on('connection', (ws, req) => {
           break;
         case 'disconnect':
           disconnectFromLive();
+          break;
+        case 'ping':
+          ws.send(JSON.stringify({ type: 'pong' }));
           break;
       }
     } catch (e) {
@@ -170,11 +193,20 @@ async function connectToLive(username, requestingClient) {
   console.log(`[TikTok] 连接到 @${username}...`);
   currentUsername = username;
 
+  // A2: 连接 Token 化 — 防止旧连接事件泄漏到新 session
+  const connectionToken = Date.now();
+  currentConnectionToken = connectionToken;
+
   // 安全超时：30s 内未收到 connected 事件则重置 isConnecting，防止死锁
   const connectTimeout = setTimeout(() => {
     if (isConnecting) {
       console.warn('[TikTok] 连接超时（30s），重置 isConnecting');
       isConnecting = false;
+      // A3: 超时时显式断开残留连接
+      if (currentConnection) {
+        currentConnection.disconnect();
+        currentConnection = null;
+      }
       broadcast({ type: 'error', message: '连接超时，请重试' });
     }
   }, 30000);
@@ -189,9 +221,13 @@ async function connectToLive(username, requestingClient) {
 
     // 连接成功
     connection.on('connected', (state) => {
+      if (connectionToken !== currentConnectionToken) return;
       console.log(`[TikTok] ✅ 已连接! Room ID: ${state.roomId}`);
       clearTimeout(connectTimeout);
       isConnecting = false;
+      currentRoomId = state.roomId;
+      currentViewerCount = state.viewerCount;
+      connectionStartTime = Date.now();
       broadcast({
         type: 'connected',
         username,
@@ -202,20 +238,25 @@ async function connectToLive(username, requestingClient) {
 
     // 断开连接
     connection.on('disconnected', () => {
+      if (connectionToken !== currentConnectionToken) return;
       console.log('[TikTok] 已断开');
       clearTimeout(connectTimeout);
       broadcast({ type: 'disconnected' });
       currentConnection = null;
       currentUsername = null;
+      currentConnectionToken = null;
+      currentRoomId = null;
+      currentViewerCount = 0;
+      connectionStartTime = null;
       isConnecting = false;
     });
 
     // 错误
     connection.on('error', (err) => {
+      if (connectionToken !== currentConnectionToken) return;
       console.error('[TikTok] ❌ 错误:', err.message);
       clearTimeout(connectTimeout);
       const errorMsg = err.message || '连接失败';
-      // 提供更友好的错误提示
       let friendlyMsg = errorMsg;
       if (errorMsg.includes('LIVE has ended') || errorMsg.includes('not found')) {
         friendlyMsg = '直播间未开播或用户不存在';
@@ -230,6 +271,7 @@ async function connectToLive(username, requestingClient) {
 
     // 聊天评论
     connection.on('chat', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
       const comment = {
         type: 'comment',
         id: data.msgId,
@@ -248,6 +290,8 @@ async function connectToLive(username, requestingClient) {
 
     // 观众数更新（含打赏榜 Top 用户）
     connection.on('roomUser', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      currentViewerCount = data.viewerCount;
       broadcast({
         type: 'roomUser',
         viewerCount: data.viewerCount,
@@ -263,16 +307,22 @@ async function connectToLive(username, requestingClient) {
 
     // 直播结束
     connection.on('streamEnd', () => {
+      if (connectionToken !== currentConnectionToken) return;
       console.log('[TikTok] 📴 直播已结束');
       broadcast({ type: 'streamEnd' });
       currentConnection = null;
       currentUsername = null;
+      currentConnectionToken = null;
+      currentRoomId = null;
+      currentViewerCount = 0;
+      connectionStartTime = null;
     });
 
     // ========== 礼物和点赞事件（广播给前端） ==========
 
     // 礼物
     connection.on('gift', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
       // giftType 1 是连续礼物，只在 repeatEnd 时发送
       if (data.giftType === 1 && !data.repeatEnd) return;
       console.log(`[礼物] ${data.nickname} 送出 ${data.giftName} x${data.repeatCount} (${data.diamondCount} 钻)`);
@@ -291,6 +341,7 @@ async function connectToLive(username, requestingClient) {
 
     // 点赞
     connection.on('like', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
       broadcast({
         type: 'like',
         userId: data.userId,
@@ -306,6 +357,7 @@ async function connectToLive(username, requestingClient) {
 
     // 用户进入直播间
     connection.on('member', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
       broadcast({
         type: 'member',
         userId: data.userId,
@@ -320,6 +372,7 @@ async function connectToLive(username, requestingClient) {
 
     // 分享直播间
     connection.on('share', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
       console.log(`[分享] ${data.nickname} 分享了直播间`);
       broadcast({
         type: 'share',
@@ -332,6 +385,7 @@ async function connectToLive(username, requestingClient) {
 
     // 关注主播
     connection.on('follow', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
       console.log(`[关注] ${data.nickname} 关注了主播`);
       broadcast({
         type: 'follow',
@@ -344,6 +398,7 @@ async function connectToLive(username, requestingClient) {
 
     // 订阅（付费粉丝团）
     connection.on('subscribe', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
       console.log(`[订阅] ${data.nickname} 订阅了粉丝团 (${data.subMonth}个月)`);
       broadcast({
         type: 'subscribe',
@@ -379,21 +434,27 @@ async function connectToLive(username, requestingClient) {
 function disconnectFromLive() {
   if (currentConnection) {
     console.log('[TikTok] 断开连接...');
+    // A2: 先失效 token，防止旧事件泄漏
+    currentConnectionToken = null;
     currentConnection.disconnect();
     currentConnection = null;
     currentUsername = null;
+    currentRoomId = null;
+    currentViewerCount = 0;
+    connectionStartTime = null;
     broadcast({ type: 'disconnected' });
   }
 }
 
-// 启动服务器
-httpServer.listen(PORT, () => {
+// 启动服务器（绑定 127.0.0.1，仅本机可访问）
+httpServer.listen(PORT, '127.0.0.1', () => {
   console.log('');
   console.log('═══════════════════════════════════════════════════════');
-  console.log('  🎵 TikTok 直播评论采集服务 v2.2');
+  console.log('  🎵 TikTok 直播评论采集服务 v2.3');
   console.log('═══════════════════════════════════════════════════════');
-  console.log(`  HTTP:      http://localhost:${PORT}`);
-  console.log(`  WebSocket: ws://localhost:${PORT}`);
+  console.log(`  HTTP:      http://127.0.0.1:${PORT}`);
+  console.log(`  WebSocket: ws://127.0.0.1:${PORT}?token=${AUTH_TOKEN}`);
+  console.log(`  Token:     ${AUTH_TOKEN}`);
   console.log('═══════════════════════════════════════════════════════');
   console.log('  采集事件:');
   console.log('  - comment:   评论');

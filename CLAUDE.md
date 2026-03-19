@@ -68,7 +68,7 @@ Popup UI (Vue 3)         IndexedDB (Dexie.js)
 | `follow/share/subscribe` | 用户行为 | uniqueId, nickname |
 | `streamEnd` | 直播结束 | — |
 
-扩展→服务器的动作：`{ action: 'connect', username }` / `{ action: 'disconnect' }`
+扩展→服务器的动作：`{ action: 'connect', username }` / `{ action: 'disconnect' }` / `{ action: 'ping' }`
 
 ### Background 关键机制
 
@@ -77,9 +77,18 @@ Popup UI (Vue 3)         IndexedDB (Dexie.js)
 3. **状态广播**：`chrome.runtime.sendMessage` → 所有 popup
 4. **keepAlive**：`chrome.alarms` 每 30s 检查 WebSocket 连接状态
 
-### IndexedDB Schema (Dexie v4)
+### IndexedDB Schema (Dexie v5)
 
-7 张表，当前版本 4：`sessions`, `comments`（按 sessionId+msgId 去重）, `gifts`, `viewerCounts`, `follows`, `shares`, `subscribes`。所有表按 `sessionId` 关联。
+8 张表，当前版本 5：`sessions`, `comments`（按 sessionId+msgId 去重）, `gifts`（按 sessionId+odl 去重）, `viewerCounts`, `follows`（按 sessionId+uniqueId 去重）, `shares`（同）, `subscribes`（同）, `likes`。所有表按 `sessionId` 关联。
+- v5 新增：gifts/follows/shares/subscribes 去重复合索引、likes 表、comments 角色字段(followRole/isModerator/isSubscriber)
+- Session 支持 status='interrupted' 和 disconnectReason 字段
+
+### Lint & Type Check 现状
+
+- 服务端(`tiktok-live-server/`): 无 ESLint 配置，验证以 `npm test`(vitest) 为准
+- 扩展(`tiktok-live-extension/`): 无 lint script，`npm run build`(WXT/Vite) 成功即表示 TS 编译通过
+- `vue-tsc` 有 2 个已有错误(ViewerChart.vue Chart.js 类型)，`tsc --noEmit` 有 1 个 .vue 模块声明错误，均为已有问题
+- 扩展端所有源码在 `src/` 下：如 `src/entrypoints/background/index.ts`、`src/db/index.ts`、`src/types/index.ts`
 
 ### 导出格式
 

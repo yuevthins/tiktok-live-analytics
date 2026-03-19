@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie';
-import type { Session, Comment, Gift, ViewerCount, Follow, Share, Subscribe } from '../types';
-export type { Follow, Share, Subscribe };
+import type { Session, Comment, Gift, ViewerCount, Follow, Share, Subscribe, Like } from '../types';
+export type { Follow, Share, Subscribe, Like };
 
 export class TikTokLiveDB extends Dexie {
   sessions!: Table<Session, number>;
@@ -10,6 +10,7 @@ export class TikTokLiveDB extends Dexie {
   follows!: Table<Follow, number>;
   shares!: Table<Share, number>;
   subscribes!: Table<Subscribe, number>;
+  likes!: Table<Like, number>;
 
   constructor() {
     super('TikTokLiveDB');
@@ -30,6 +31,17 @@ export class TikTokLiveDB extends Dexie {
       shares: '++id, sessionId, timestamp',
       subscribes: '++id, sessionId, timestamp',
     });
+    // 版本 5: 去重索引 + likes 表 + comments 角色字段
+    this.version(5).stores({
+      sessions: '++id, username, roomId, status, startTime',
+      comments: '++id, sessionId, &[sessionId+msgId], timestamp',
+      gifts: '++id, sessionId, &[sessionId+odl], timestamp',
+      viewerCounts: '++id, sessionId, timestamp',
+      follows: '++id, sessionId, &[sessionId+uniqueId], timestamp',
+      shares: '++id, sessionId, &[sessionId+uniqueId], timestamp',
+      subscribes: '++id, sessionId, &[sessionId+uniqueId], timestamp',
+      likes: '++id, sessionId, timestamp',
+    });
   }
 }
 
@@ -48,14 +60,21 @@ export const dbHelper = {
   },
 
   // 结束会话
-  async endSession(sessionId: number, status: 'completed' | 'error' = 'completed', totalLikes?: number): Promise<void> {
-    const updateData: { endTime: Date; status: 'completed' | 'error'; totalLikes?: number } = {
+  async endSession(
+    sessionId: number,
+    status: 'completed' | 'error' | 'interrupted' = 'completed',
+    totalLikes?: number,
+    disconnectReason?: 'streamEnd' | 'userDisconnect' | 'transportError' | 'timeout',
+  ): Promise<void> {
+    const updateData: Record<string, unknown> = {
       endTime: new Date(),
       status,
     };
-    // P1: 保存点赞数
     if (totalLikes !== undefined) {
       updateData.totalLikes = totalLikes;
+    }
+    if (disconnectReason) {
+      updateData.disconnectReason = disconnectReason;
     }
     await db.sessions.update(sessionId, updateData);
   },
@@ -192,6 +211,11 @@ export const dbHelper = {
     return await db.subscribes.where('sessionId').equals(sessionId).toArray();
   },
 
+  // 获取会话的所有点赞记录
+  async getLikesBySession(sessionId: number): Promise<Like[]> {
+    return await db.likes.where('sessionId').equals(sessionId).toArray();
+  },
+
   // 获取会话
   async getSession(sessionId: number): Promise<Session | undefined> {
     return await db.sessions.get(sessionId);
@@ -266,20 +290,21 @@ export const dbHelper = {
 
   // 删除会话及其数据
   async deleteSession(sessionId: number): Promise<void> {
-    await db.transaction('rw', [db.sessions, db.comments, db.gifts, db.viewerCounts, db.follows, db.shares, db.subscribes], async () => {
+    await db.transaction('rw', [db.sessions, db.comments, db.gifts, db.viewerCounts, db.follows, db.shares, db.subscribes, db.likes], async () => {
       await db.comments.where('sessionId').equals(sessionId).delete();
       await db.gifts.where('sessionId').equals(sessionId).delete();
       await db.viewerCounts.where('sessionId').equals(sessionId).delete();
       await db.follows.where('sessionId').equals(sessionId).delete();
       await db.shares.where('sessionId').equals(sessionId).delete();
       await db.subscribes.where('sessionId').equals(sessionId).delete();
+      await db.likes.where('sessionId').equals(sessionId).delete();
       await db.sessions.delete(sessionId);
     });
   },
 
   // 清除所有数据（事务化，防止中途崩溃导致数据不一致）
   async clearAll(): Promise<void> {
-    await db.transaction('rw', [db.sessions, db.comments, db.gifts, db.viewerCounts, db.follows, db.shares, db.subscribes], async () => {
+    await db.transaction('rw', [db.sessions, db.comments, db.gifts, db.viewerCounts, db.follows, db.shares, db.subscribes, db.likes], async () => {
       await db.sessions.clear();
       await db.comments.clear();
       await db.gifts.clear();
@@ -287,6 +312,7 @@ export const dbHelper = {
       await db.follows.clear();
       await db.shares.clear();
       await db.subscribes.clear();
+      await db.likes.clear();
     });
   },
 

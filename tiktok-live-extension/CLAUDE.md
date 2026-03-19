@@ -19,8 +19,10 @@ npm run zip          # 打包为 .zip
 
 ```bash
 cd ../tiktok-live-server
-node server.js       # 启动在 ws://localhost:3456
+node server.js       # 启动在 ws://127.0.0.1:3456
 ```
+
+服务器启动后会打印 `AUTH_TOKEN`，扩展需在 WS URL 中携带 `?token=xxx` 参数连接。
 
 ## 架构概览
 
