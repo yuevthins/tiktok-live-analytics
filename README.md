@@ -1,8 +1,8 @@
 # TikTok Live Analytics / TikTok 直播间分析工具
 
-A Chrome extension + local Node server for real-time TikTok live stream data collection and analysis.
+A Chrome extension + local Node server for real-time TikTok live stream data collection and analysis. Now with e-commerce, red envelopes, PK battles, Q&A, emotes, and VIP barrages.
 
-Chrome 扩展 + 本地 Node 服务器，实时采集 TikTok 直播间数据并分析。
+Chrome 扩展 + 本地 Node 服务器，实时采集 TikTok 直播间数据并分析。v3.0 新增电商、红包、PK 对战、问答、表情、VIP 弹幕等全量事件。
 
 ## Table of Contents / 目录
 
@@ -44,10 +44,10 @@ Session management & export<br>会话管理与导出
 | **Viewer count** / 观众数 | Real-time count with change indicator (▲/▼) and peak tracking / 实时在线人数，含涨跌指示和峰值追踪 |
 | **Comment count** / 评论数 | Accumulated comments in current session / 当前会话累计评论总数 |
 | **Duration, Likes, Gifts** / 时长、点赞、礼物 | Compact bento-grid layout with auto-formatted numbers / 紧凑卡片布局，大数字自动缩写（如 24.8K） |
-| **Viewer trend** / 观众趋势图 | Line chart with gradient fill, peak marker highlighted in red / 带渐变填充的折线图，峰值以红点标记 |
-| **Hot keywords** / 热门词汇 | Auto-extracted from comments, color-coded by frequency / 从评论自动提取高频词，按频率着色 |
+| **Viewer trend** / 观众趋势图 | Incremental line chart with gradient fill, peak marker in red / 增量更新折线图，峰值以红点标记 |
+| **Hot keywords** / 热门词汇 | Auto-extracted from comments (debounced), color-coded by frequency / 从评论自动提取高频词（500ms 节流），按频率着色 |
 | **Top contributors** / 贡献榜 | Gift leaderboard ranked by coin value / 按打赏金额排序的贡献榜 |
-| **Live comments** / 最近评论 | Scrolling feed with avatar, nickname, content / 实时评论流，含头像、昵称、内容 |
+| **Live comments** / 最近评论 | Scrolling feed with avatar, nickname, actual timestamp / 实时评论流，含头像、昵称、实际消息时间 |
 | **Export** / 导出 | Copy Summary, HTML Report, Excel, JSON — 4 formats / 复制摘要、HTML 报告、Excel、JSON 四种格式 |
 
 ### Session History Details / 采集历史详情
@@ -67,17 +67,29 @@ Session management & export<br>会话管理与导出
 | | Gifts / 礼物 | Gift name, repeat count, diamond value |
 | | Likes / 点赞 | Like count, total likes |
 | | Viewers / 观众 | Real-time count, top viewer leaderboard |
-| | Follows, Shares / 关注、分享 | Event tracking with timestamps |
-| **Storage** / 存储 | IndexedDB (Dexie.js) | 7 tables, persists across browser restarts / 7 张表，浏览器重启不丢失 |
-| **Export** / 导出 | JSON | Full raw data / 完整原始数据 |
-| | Excel (.xlsx) | Multi-sheet formatted spreadsheet / 多 Sheet 格式化表格 |
+| | Follows, Shares, Subscribes / 关注、分享、订阅 | Event tracking with timestamps |
+| | Shopping / 商品推荐 | Product name, price, shop name |
+| | Envelopes / 红包 | Sender, diamond count, participants |
+| | Questions / 问答 | User questions in Q&A sessions |
+| | Battle (PK) / PK 对战 | Battle scores, anchor matchups |
+| | Emotes / 表情 | Emote usage tracking |
+| | Barrages / VIP 弹幕 | VIP barrage messages with type |
+| | Rank / 排名 | Hourly rank and rank updates |
+| **Storage** / 存储 | IndexedDB (Dexie.js) | 14 tables (v6), persists across browser restarts / 14 张表（v6），浏览器重启不丢失 |
+| **Export** / 导出 | JSON | Full raw data including all event types / 完整原始数据（含全部事件类型） |
+| | Excel (.xlsx) | 13 sheets: overview, comments, gifts, viewers, follows, shares, subscribes, shopping, envelopes, Q&A, PK, emotes, barrages / 13 个 Sheet |
 | | HTML Report | Self-contained with embedded Chart.js / 自包含 HTML 报告（内嵌图表） |
 | | Copy Summary | One-click clipboard / 一键复制摘要 |
-| **UI** / 界面 | Dark / Light mode | Persistent theme toggle / 深色浅色切换，自动记忆 |
-| | Bento grid stats | Dashboard-style metric cards / 仪表盘风格数据卡片 |
+| **UI** / 界面 | 4 Tabs | Home (collect), Monetize (gifts/envelopes/shopping/PK), Interact (Q&A/emotes/barrages), History / 采集、变现、互动、历史 |
+| | Dark / Light mode | Persistent theme toggle, consistent across all tabs / 深色浅色切换，全 Tab 一致 |
+| **Performance** / 性能 | Throttled broadcast | 200ms broadcast throttle, debounced word stats / 200ms 广播节流，热词统计 500ms 防抖 |
+| | Incremental chart | ViewerChart updates without rebuild / 观众图表增量更新不闪烁 |
 | **Security** / 安全 | Origin validation | localhost + chrome-extension only |
+| | Connection limit | Max 10 WS clients / 最多 10 个 WS 连接 |
+| | sender.id check | Messages verified from own extension / 验证消息来自本扩展 |
 | | Input sanitization | HTML escape + username regex |
 | | wsUrl whitelist | ws(s)://localhost or 127.0.0.1 only |
+| | Log sanitization | Production logs show action only, no raw data / 生产日志仅打印动作 |
 
 ## Quick Start / 快速开始
 
@@ -189,6 +201,14 @@ Server → Extension messages:
 | `like` | Like event / 点赞事件 |
 | `roomUser` | Viewer count + top viewers / 观众数 + 打赏榜 |
 | `follow` / `share` / `subscribe` | User actions / 用户行为 |
+| `oecLiveShopping` | Product recommendation / 商品推荐 |
+| `envelope` | Red envelope / 红包 |
+| `hourlyRank` / `rankUpdate` / `rankText` | Rank events / 排名事件 |
+| `questionNew` | Viewer question / 观众提问 |
+| `linkMicArmies` | PK battle scores / PK 积分 |
+| `linkMicBattle` | PK battle status / PK 对战状态 |
+| `emote` | Emote chat / 表情聊天 |
+| `barrage` | VIP barrage / VIP 弹幕 |
 | `streamEnd` | Stream ended / 直播结束 |
 
 Extension → Server: `{ action: 'connect', username }` / `{ action: 'disconnect' }`
@@ -198,9 +218,12 @@ Extension → Server: `{ action: 'connect', username }` / `{ action: 'disconnect
 | Measure / 措施 | Details / 详情 |
 |---|---|
 | **Origin validation** / 来源验证 | Only `localhost`, `127.0.0.1`, `chrome-extension://` allowed |
+| **Connection limit** / 连接上限 | Max 10 WebSocket clients (prevents local DoS) / 最多 10 个 WS 客户端 |
+| **sender.id verification** / 消息来源验证 | `chrome.runtime.onMessage` checks sender is own extension / 验证消息来自本扩展 |
 | **Username validation** / 用户名验证 | Strict regex `/^[a-zA-Z0-9_.]{1,24}$/` |
 | **wsUrl whitelist** / WS 地址白名单 | Only `ws(s)://localhost` or `ws(s)://127.0.0.1`, no paths |
 | **XSS prevention** / XSS 防护 | All user input HTML-escaped before display |
+| **Log sanitization** / 日志脱敏 | WS messages logged by action only, no raw content / 仅记录动作类型 |
 
 ## License / 许可证
 

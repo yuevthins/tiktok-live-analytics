@@ -40,18 +40,25 @@ TikTok Live API → Node 服务器(tiktok-live-connector) → WebSocket → Chro
 
 | 文件 | 职责 |
 |------|------|
-| `entrypoints/background/index.ts` | Service Worker - WebSocket 连接管理、消息路由、批量数据写入 |
-| `entrypoints/popup/App.vue` | 主 UI - 连接控制、实时数据展示、导出按钮 |
+| `entrypoints/background/index.ts` | Service Worker - WebSocket 连接管理、消息路由、批量数据写入、200ms 广播节流 |
+| `entrypoints/popup/App.vue` | 主 UI - 连接控制、实时数据展示、导出按钮（采集 Tab） |
+| `components/TabMonetize.vue` | 变现 Tab - 礼物/红包/商品推荐/PK 对战展示 |
+| `components/TabInteract.vue` | 互动 Tab - 问答/表情/VIP 弹幕展示 |
 | `components/TabHistory.vue` | 历史 Tab - 历史会话列表、多格式导出 |
-| `db/index.ts` | Dexie.js 数据库封装 - 所有 CRUD 操作 |
-| `types/index.ts` | WebSocket 消息类型、数据库模型定义 |
+| `components/ViewerChart.vue` | 观众趋势图 - 增量更新（data 变化不 destroy） |
+| `db/index.ts` | Dexie.js v6 数据库封装 - 14 张表 CRUD + `getAllSessionData()` |
+| `types/index.ts` | WebSocket 消息类型（20+）、数据库模型定义 |
+| `utils/format.ts` | 共享工具函数 - formatNumber, getInitial, formatTime |
+| `utils/excel-export.ts` | Excel 导出 - 13 个 Sheet 含全部事件类型 |
 
 ### Background 关键机制
 
-1. **批量写入缓冲区**：评论/礼物等数据先缓存，每 3 秒或缓冲区满 50 条时批量写入 IndexedDB
-2. **事件缓冲**：session 创建前收到的事件会暂存到 `eventBuffer`，session ready 后重放
-3. **状态广播**：通过 `chrome.runtime.sendMessage` 广播状态给所有 popup
+1. **批量写入缓冲区**：评论/礼物等数据先缓存，每 3 秒或缓冲区满 50 条时批量写入 IndexedDB（高频事件如 barrage/emote 也有即时 flush）
+2. **事件缓冲**：session 创建前收到的事件暂存到 `eventBuffer`，session ready 后快照遍历重放（防并发竞态）
+3. **状态广播**：通过 `chrome.runtime.sendMessage` 广播状态给所有 popup，200ms 节流防高频序列化
 4. **keepAlive**：使用 `chrome.alarms` 每 30 秒检查 WebSocket 连接，防止 Service Worker 休眠
+5. **likeCount 持久化**：每次 flush 时写入 session.totalLikes，防 SW 崩溃丢数据
+6. **安全**：onMessage 验证 sender.id = chrome.runtime.id
 
 ### 导出功能
 

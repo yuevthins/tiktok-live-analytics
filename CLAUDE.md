@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TikTok 直播间分析工具 - Chrome 扩展 + 本地 Node 服务器，实时采集 TikTok 直播间评论、礼物、观众等数据，支持 IndexedDB 持久化和多格式导出。
+TikTok 直播间分析工具 v3.0 - Chrome 扩展 + 本地 Node 服务器，实时采集 TikTok 直播间全量事件（评论、礼物、观众、电商、红包、PK、问答、表情、弹幕等），支持 IndexedDB 持久化和多格式导出（JSON/Excel/HTML）。
 
 ## Development Commands
 
@@ -66,22 +66,35 @@ Popup UI (Vue 3)         IndexedDB (Dexie.js)
 | `roomUser` | 观众数 + 打赏榜 Top | viewerCount, topViewers[] |
 | `member` | 观众进入（不存储） | followRole |
 | `follow/share/subscribe` | 用户行为 | uniqueId, nickname |
+| `oecLiveShopping` | 商品推荐 | productName, productPrice, shopName |
+| `envelope` | 红包 | envelopeId, senderNickname, diamondCount |
+| `hourlyRank/rankUpdate/rankText` | 排名事件 | rankType, rank |
+| `questionNew` | 观众提问 | questionId, content |
+| `linkMicArmies` | PK 积分 | battleId, battleItems[] |
+| `linkMicBattle` | PK 对战状态 | battleId, status, anchors[] |
+| `emote` | 表情聊天 | emoteId |
+| `barrage` | VIP 弹幕 | content, barrageType |
 | `streamEnd` | 直播结束 | — |
 
 扩展→服务器的动作：`{ action: 'connect', username }` / `{ action: 'disconnect' }` / `{ action: 'ping' }`
 
 ### Background 关键机制
 
-1. **批量写入缓冲**：评论/礼物/观众数等先缓存，每 3s 或满 50 条批量写入 IndexedDB（`flushBuffers()`）
-2. **事件缓冲**：session 创建前收到的事件暂存 `eventBuffer`（上限 500），session ready 后重放
-3. **状态广播**：`chrome.runtime.sendMessage` → 所有 popup
+1. **批量写入缓冲**：评论/礼物/观众数等先缓存，每 3s 或满 50 条批量写入 IndexedDB（`flushBuffers()`），高频事件（barrage/emote）也支持即时 flush
+2. **事件缓冲**：session 创建前收到的事件暂存 `eventBuffer`（上限 500），session ready 后快照遍历重放（防竞态）
+3. **状态广播**：`chrome.runtime.sendMessage` → 所有 popup，200ms 节流防高频序列化
 4. **keepAlive**：`chrome.alarms` 每 30s 检查 WebSocket 连接状态
+5. **likeCount 持久化**：每次 flush 时同步写入 session.totalLikes，防 SW 崩溃丢失
+6. **安全**：onMessage 验证 sender.id，防跨扩展消息注入
 
-### IndexedDB Schema (Dexie v5)
+### IndexedDB Schema (Dexie v6)
 
-8 张表，当前版本 5：`sessions`, `comments`（按 sessionId+msgId 去重）, `gifts`（按 sessionId+odl 去重）, `viewerCounts`, `follows`（按 sessionId+uniqueId 去重）, `shares`（同）, `subscribes`（同）, `likes`。所有表按 `sessionId` 关联。
-- v5 新增：gifts/follows/shares/subscribes 去重复合索引、likes 表、comments 角色字段(followRole/isModerator/isSubscriber)
+14 张表，当前版本 6：`sessions`, `comments`（按 sessionId+msgId 去重）, `gifts`（按 sessionId+odl 去重）, `viewerCounts`, `follows`（按 sessionId+uniqueId 去重）, `shares`（同）, `subscribes`（同）, `likes`, `shoppings`, `envelopes`（按 sessionId+envelopeId 去重）, `questions`（按 sessionId+questionId 去重）, `battleScores`, `emotes`, `barrages`。所有表按 `sessionId` 关联。
+- v6 新增：电商/红包/问答/PK/表情/弹幕 6 张表
+- v5 新增：gifts/follows/shares/subscribes 去重复合索引、likes 表、comments 角色字段
 - Session 支持 status='interrupted' 和 disconnectReason 字段
+- `dbHelper.getAllSessionData(sessionId)` 提供统一的全量数据查询接口
+- `getSessionStats()` 使用 Promise.all 并行查询所有统计
 
 ### Lint & Type Check 现状
 
@@ -108,3 +121,6 @@ Popup UI (Vue 3)         IndexedDB (Dexie.js)
 - 用户名验证：`/^[a-zA-Z0-9_.]{1,24}$/`
 - Origin 白名单：`chrome-extension://`, `localhost`, `127.0.0.1`
 - HTML 转义防 XSS
+- WS 连接上限：最多 10 个客户端（防本机 DoS）
+- 日志脱敏：生产日志仅打印动作类型，不打印完整消息内容
+- 消息来源验证：`chrome.runtime.onMessage` 检查 `sender.id`
