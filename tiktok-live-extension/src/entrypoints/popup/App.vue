@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import TabHistory from '../../components/TabHistory.vue';
+import TabMonetize from '../../components/TabMonetize.vue';
+import TabInteract from '../../components/TabInteract.vue';
 import ViewerChart from '../../components/ViewerChart.vue';
 import { getWordFrequency, type WordCount } from '../../utils/word-stats';
+import { formatNumber, getInitial, formatTime as formatTimestamp } from '../../utils/format';
 import { dbHelper } from '../../db';
 import { exportToExcel } from '../../utils/excel-export';
 import { exportToHtml } from '../../utils/html-export';
 import type { ConnectionStatus, ViewerCount } from '../../types';
 
 // Tab 状态
-const activeTab = ref<'home' | 'history'>('home');
+const activeTab = ref<'home' | 'monetize' | 'interact' | 'history'>('home');
 
 // 主题状态
 const isDarkMode = ref(true);
@@ -37,6 +40,19 @@ const topWords = ref<WordCount[]>([]);
 // 礼物榜（从 background 同步）
 const topViewers = ref<Array<{ uniqueId: string; nickname: string; coinCount: number }>>([]);
 
+// Tier 1+2 新增状态
+const shoppingCount = ref(0);
+const envelopeCount = ref(0);
+const envelopeDiamonds = ref(0);
+const questionCount = ref(0);
+const emoteCount = ref(0);
+const barrageCount = ref(0);
+const currentRank = ref<{ rankType: string; rank: number } | null>(null);
+const currentBattle = ref<{ battleId: string; status: number; anchors: Array<{ userId: string; nickname: string }> } | null>(null);
+const recentShoppingsData = ref<Array<{ productName: string; productPrice: string; shopName: string; timestamp: number }>>([]);
+const recentQuestionsData = ref<Array<{ nickname: string; content: string; timestamp: number }>>([]);
+const recentBarragesData = ref<Array<{ nickname: string; content: string; barrageType: string; timestamp: number }>>([]);
+
 // 峰值观众数
 const peakViewerCount = ref(0);
 const peakViewerTime = ref<Date | null>(null);
@@ -45,7 +61,7 @@ const peakViewerTime = ref<Date | null>(null);
 const commentsPaused = ref(false);
 
 // 最近评论详情（用于展示）
-const latestCommentsDetail = ref<Array<{ nickname: string; content: string }>>([]);
+const latestCommentsDetail = ref<Array<{ nickname: string; content: string; timestamp: number }>>([]);
 
 // 复制状态
 const copySuccess = ref(false);
@@ -96,35 +112,6 @@ const viewerDelta = computed(() => {
   const recent = viewerHistory.value.slice(-2);
   return recent[1].count - recent[0].count;
 });
-
-// 格式化数字（大数字缩写）
-function formatNumber(num: number): string {
-  if (num >= 1000000) {
-    return (num / 1000000).toFixed(1) + 'M';
-  }
-  if (num >= 10000) {
-    return (num / 1000).toFixed(1) + 'K';
-  }
-  return num.toLocaleString();
-}
-
-// 格式化时间戳
-function formatTimestamp(date: Date): string {
-  const d = new Date(date);
-  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-}
-
-// 获取首字母头像
-function getInitial(name: string): string {
-  if (!name) return '?';
-  const char = name.charAt(0).toUpperCase();
-  // 如果是中文字符，直接返回
-  if (/[\u4e00-\u9fa5]/.test(char)) return char;
-  // 如果是英文，返回大写
-  if (/[A-Z]/.test(char)) return char;
-  // 其他情况返回第一个字符
-  return char || '?';
-}
 
 // 主题切换
 async function toggleTheme() {
@@ -178,6 +165,14 @@ function syncState(state: any) {
   currentSessionId.value = state.currentSessionId;
   errorMessage.value = state.errorMessage;
   topViewers.value = state.topViewers || [];
+  shoppingCount.value = state.shoppingCount ?? 0;
+  envelopeCount.value = state.envelopeCount ?? 0;
+  envelopeDiamonds.value = state.envelopeDiamonds ?? 0;
+  questionCount.value = state.questionCount ?? 0;
+  emoteCount.value = state.emoteCount ?? 0;
+  barrageCount.value = state.barrageCount ?? 0;
+  currentRank.value = state.currentRank || null;
+  currentBattle.value = state.currentBattle || null;
 
   if ((state.viewerCount ?? 0) !== viewerCount.value && isNowConnected) {
     viewerCount.value = state.viewerCount ?? 0;
@@ -227,14 +222,18 @@ function syncState(state: any) {
   }
 }
 
-function updateTopWords(comments: string[], commentsDetail?: Array<{ nickname: string; content: string }>) {
+let wordStatsTimer: ReturnType<typeof setTimeout> | null = null;
+function updateTopWords(comments: string[], commentsDetail?: Array<{ nickname: string; content: string; timestamp: number }>) {
   recentComments.value = comments;
-  if (comments.length >= 10) {
-    topWords.value = getWordFrequency(comments, 5);
-  }
-  if (commentsDetail) {
+  if (commentsDetail && !commentsPaused.value) {
     latestCommentsDetail.value = commentsDetail.slice(-10).reverse();
   }
+  if (wordStatsTimer) clearTimeout(wordStatsTimer);
+  wordStatsTimer = setTimeout(() => {
+    if (comments.length >= 10) {
+      topWords.value = getWordFrequency(comments, 5);
+    }
+  }, 500);
 }
 
 async function fetchState() {
@@ -250,6 +249,9 @@ async function fetchState() {
     if (response?.recentComments) {
       updateTopWords(response.recentComments, response.recentCommentsDetail);
     }
+    if (response?.recentShoppings) recentShoppingsData.value = response.recentShoppings;
+    if (response?.recentQuestions) recentQuestionsData.value = response.recentQuestions;
+    if (response?.recentBarrages) recentBarragesData.value = response.recentBarrages;
   } catch (e) {
     console.error('Failed to get state:', e);
   }
@@ -261,6 +263,9 @@ function handleMessage(message: any) {
     if (message.recentComments) {
       updateTopWords(message.recentComments, message.recentCommentsDetail);
     }
+    if (message.recentShoppings) recentShoppingsData.value = message.recentShoppings;
+    if (message.recentQuestions) recentQuestionsData.value = message.recentQuestions;
+    if (message.recentBarrages) recentBarragesData.value = message.recentBarrages;
   }
 }
 
@@ -300,15 +305,7 @@ async function exportExcel() {
     const session = await dbHelper.getSession(sessionId);
     if (!session) return;
 
-    const [comments, gifts, viewerCounts, follows, shares, subscribes, stats] = await Promise.all([
-      dbHelper.getCommentsBySession(sessionId),
-      dbHelper.getGiftsBySession(sessionId),
-      dbHelper.getViewerCountsBySession(sessionId),
-      dbHelper.getFollowsBySession(sessionId),
-      dbHelper.getSharesBySession(sessionId),
-      dbHelper.getSubscribesBySession(sessionId),
-      dbHelper.getSessionStats(sessionId),
-    ]);
+    const { comments, gifts, viewerCounts, follows, shares, subscribes, shoppings, envelopes, questions, battleScores, emotes, barrages, stats } = await dbHelper.getAllSessionData(sessionId);
 
     const endTime = session.endTime || new Date();
     const duration = Math.round((new Date(endTime).getTime() - new Date(session.startTime).getTime()) / 1000);
@@ -333,6 +330,12 @@ async function exportExcel() {
       follows,
       shares,
       subscribes,
+      shoppings,
+      envelopes,
+      questions,
+      battleScores,
+      emotes,
+      barrages,
     }, filename);
   } catch (e) {
     console.error('Excel export failed:', e);
@@ -473,21 +476,25 @@ onUnmounted(() => {
 
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
-      <button
-        class="nav-tab"
-        :class="{ active: activeTab === 'home' }"
-        @click="activeTab = 'home'"
-      >
+      <button class="nav-tab" :class="{ active: activeTab === 'home' }" @click="activeTab = 'home'">
         <svg class="tab-icon" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 3L4 9v12h16V9l-8-6zm6 16h-4v-5h-4v5H6v-9l6-4.5 6 4.5v9z"/>
         </svg>
         <span>采集</span>
       </button>
-      <button
-        class="nav-tab"
-        :class="{ active: activeTab === 'history' }"
-        @click="activeTab = 'history'"
-      >
+      <button class="nav-tab" :class="{ active: activeTab === 'monetize' }" @click="activeTab = 'monetize'">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-.98 2.4-1.59 0-.83-.44-1.61-2.67-2.14-2.48-.6-4.18-1.62-4.18-3.67 0-1.72 1.39-2.84 3.11-3.21V4h2.67v1.95c1.86.45 2.79 1.86 2.85 3.39H14.3c-.05-1.11-.64-1.87-2.22-1.87-1.5 0-2.4.68-2.4 1.64 0 .84.65 1.39 2.67 1.91s4.18 1.39 4.18 3.91c-.01 1.83-1.38 2.83-3.12 3.16z"/>
+        </svg>
+        <span>变现</span>
+      </button>
+      <button class="nav-tab" :class="{ active: activeTab === 'interact' }" @click="activeTab = 'interact'">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/>
+        </svg>
+        <span>互动</span>
+      </button>
+      <button class="nav-tab" :class="{ active: activeTab === 'history' }" @click="activeTab = 'history'">
         <svg class="tab-icon" viewBox="0 0 24 24" fill="currentColor">
           <path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/>
         </svg>
@@ -731,9 +738,9 @@ onUnmounted(() => {
                     <template v-else>{{ index + 1 }}</template>
                   </span>
                   <span class="rank-avatar" :class="`avatar-${(index % 5) + 1}`">
-                    {{ getInitial(user.nickname) }}
+                    {{ getInitial(user.nickname || user.uniqueId) }}
                   </span>
-                  <span class="rank-name">{{ user.nickname }}</span>
+                  <span class="rank-name">{{ user.nickname || user.uniqueId }}</span>
                   <span class="rank-coins">
                     <svg class="coin-icon" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-.98 2.4-1.59 0-.83-.44-1.61-2.67-2.14-2.48-.6-4.18-1.62-4.18-3.67 0-1.72 1.39-2.84 3.11-3.21V4h2.67v1.95c1.86.45 2.79 1.86 2.85 3.39H14.3c-.05-1.11-.64-1.87-2.22-1.87-1.5 0-2.4.68-2.4 1.64 0 .84.65 1.39 2.67 1.91s4.18 1.39 4.18 3.91c-.01 1.83-1.38 2.83-3.12 3.16z"/>
@@ -775,7 +782,7 @@ onUnmounted(() => {
                     <span class="comment-author">{{ c.nickname }}</span>
                     <span class="comment-content">{{ c.content }}</span>
                   </div>
-                  <span class="comment-time">{{ new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }}</span>
+                  <span class="comment-time">{{ formatTimestamp(c.timestamp) }}</span>
                 </div>
               </div>
             </div>
@@ -837,6 +844,31 @@ onUnmounted(() => {
           </svg>
           关闭此窗口不会中断采集
         </p>
+      </div>
+
+      <!-- Monetize Tab -->
+      <div v-else-if="activeTab === 'monetize'" class="tab-panel">
+        <TabMonetize
+          :gift-count="giftCount"
+          :envelope-count="envelopeCount"
+          :envelope-diamonds="envelopeDiamonds"
+          :shopping-count="shoppingCount"
+          :top-viewers="topViewers"
+          :current-battle="currentBattle"
+          :recent-shoppings="recentShoppingsData"
+        />
+      </div>
+
+      <!-- Interact Tab -->
+      <div v-else-if="activeTab === 'interact'" class="tab-panel">
+        <TabInteract
+          :question-count="questionCount"
+          :emote-count="emoteCount"
+          :barrage-count="barrageCount"
+          :current-rank="currentRank"
+          :recent-questions="recentQuestionsData"
+          :recent-barrages="recentBarragesData"
+        />
       </div>
 
       <!-- History Tab -->
@@ -1077,12 +1109,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+  gap: 4px;
+  padding: var(--space-3) var(--space-2);
   background: none;
   border: none;
   font-family: inherit;
-  font-size: var(--text-base);
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-muted);
   cursor: pointer;
@@ -1807,8 +1839,7 @@ onUnmounted(() => {
 }
 
 .rank-item-top {
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.1) 0%, rgba(168, 85, 247, 0.05) 100%);
-  border: 1px solid rgba(168, 85, 247, 0.2);
+  background: var(--bg-elevated);
 }
 
 .rank-medal {

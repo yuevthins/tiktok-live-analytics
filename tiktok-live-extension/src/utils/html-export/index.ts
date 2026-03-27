@@ -6,7 +6,6 @@ import { dbHelper } from '../../db';
 import { generateHtmlReport, type HtmlExportData } from './template';
 import { getWordFrequency } from '../word-stats';
 import { CHARTJS_INLINE } from './chartjs-inline';
-import type { Comment, Gift } from '../../types';
 
 // CDN 降级方案
 const CHARTJS_CDN = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';
@@ -55,16 +54,7 @@ export async function exportToHtml(sessionId: number): Promise<void> {
     throw new Error('Session not found');
   }
 
-  // 并行获取所有数据
-  const [comments, gifts, viewerCounts, follows, shares, subscribes, stats] = await Promise.all([
-    dbHelper.getCommentsBySession(sessionId),
-    dbHelper.getGiftsBySession(sessionId),
-    dbHelper.getViewerCountsBySession(sessionId),
-    dbHelper.getFollowsBySession(sessionId),
-    dbHelper.getSharesBySession(sessionId),
-    dbHelper.getSubscribesBySession(sessionId),
-    dbHelper.getSessionStats(sessionId),
-  ]);
+  const { comments, gifts, viewerCounts, follows, shares, subscribes, shoppings, envelopes, questions, battleScores, emotes, barrages, stats } = await dbHelper.getAllSessionData(sessionId);
 
   // 获取点赞数：活跃会话从 background 获取，已结束会话从 session 获取
   let totalLikes = session.totalLikes || 0;
@@ -98,11 +88,17 @@ export async function exportToHtml(sessionId: number): Promise<void> {
       ...stats,
       totalLikes,
     },
-    comments: comments as Comment[],
-    gifts: gifts as Gift[],
+    comments,
+    gifts,
     follows,
     shares,
     subscribes,
+    shoppings,
+    envelopes,
+    questions,
+    battleScores,
+    emotes,
+    barrages,
     viewerCounts: viewerCounts.map(v => ({
       timestamp: new Date(v.timestamp).toISOString(),
       count: v.count,

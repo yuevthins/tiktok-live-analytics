@@ -31,6 +31,14 @@ interface State {
   followCount: number;
   shareCount: number;
   subscribeCount: number;
+  shoppingCount: number;
+  envelopeCount: number;
+  envelopeDiamonds: number;
+  questionCount: number;
+  emoteCount: number;
+  barrageCount: number;
+  currentRank: { rankType: string; rank: number } | null;
+  currentBattle: { battleId: string; status: number; anchors: Array<{ userId: string; nickname: string }> } | null;
   topViewers: Array<{ uniqueId: string; nickname: string; coinCount: number }>;
   startTime: number | null;
   currentSessionId: number | null;
@@ -48,6 +56,14 @@ let state: State = {
   followCount: 0,
   shareCount: 0,
   subscribeCount: 0,
+  shoppingCount: 0,
+  envelopeCount: 0,
+  envelopeDiamonds: 0,
+  questionCount: 0,
+  emoteCount: 0,
+  barrageCount: 0,
+  currentRank: null,
+  currentBattle: null,
   topViewers: [],
   startTime: null,
   currentSessionId: null,
@@ -66,7 +82,7 @@ const MAX_EVENT_BUFFER = 500; // P1: 限制 eventBuffer 大小防止内存泄漏
 // 最近评论（用于热词统计）
 let recentComments: string[] = [];
 // 最近评论详情（用于 UI 展示）
-let recentCommentsDetail: Array<{ nickname: string; content: string }> = [];
+let recentCommentsDetail: Array<{ nickname: string; content: string; timestamp: number }> = [];
 const MAX_RECENT_COMMENTS = 200;
 
 // 批量写入缓冲区
@@ -95,21 +111,48 @@ let followBuffer: Array<{ uniqueId: string; nickname: string; timestamp: number 
 let shareBuffer: Array<{ uniqueId: string; nickname: string; timestamp: number }> = [];
 let subscribeBuffer: Array<{ uniqueId: string; nickname: string; subMonth: number; timestamp: number }> = [];
 let likeBuffer: Array<{ totalLikeCount: number; timestamp: number }> = [];
+let shoppingBuffer: Array<{ productName: string; productPrice: string; shopName: string; productImageUrl?: string; timestamp: number }> = [];
+let envelopeBuffer: Array<{ envelopeId: string; senderNickname: string; diamondCount: number; participantCount: number; timestamp: number }> = [];
+let questionBuffer: Array<{ questionId: string; userId: string; username: string; nickname: string; content: string; timestamp: number }> = [];
+let battleScoreBuffer: Array<{ battleId: string; battleItems: Array<{ hostUserId: string; hostNickname: string; points: number }>; timestamp: number }> = [];
+let emoteBuffer: Array<{ userId: string; username: string; nickname: string; emoteId: string; emoteImageUrl?: string; timestamp: number }> = [];
+let barrageBuffer: Array<{ userId: string; username: string; nickname: string; content: string; barrageType: string; timestamp: number }> = [];
+
+// 最近记录缓存（供 popup 展示）
+let recentShoppings: Array<{ productName: string; productPrice: string; shopName: string; timestamp: number }> = [];
+let recentQuestions: Array<{ nickname: string; content: string; timestamp: number }> = [];
+let recentBarrages: Array<{ nickname: string; content: string; barrageType: string; timestamp: number }> = [];
+const MAX_RECENT_ITEMS = 20;
+
 let flushTimerActive = false;
 let flushIntervalId: ReturnType<typeof setInterval> | null = null;
 const BUFFER_SIZE = 50;
 
 // 广播状态给所有 popup
+let broadcastScheduled = false;
 function broadcastState() {
-  chrome.runtime.sendMessage({ type: 'stateUpdate', state, recentComments, recentCommentsDetail }).catch(() => {});
+  if (broadcastScheduled) return;
+  broadcastScheduled = true;
+  setTimeout(() => {
+    broadcastScheduled = false;
+    chrome.runtime.sendMessage({
+      type: 'stateUpdate', state,
+      recentComments, recentCommentsDetail,
+      recentShoppings, recentQuestions, recentBarrages,
+    }).catch(() => {});
+  }, 200);
 }
 
 // 刷新缓冲区到数据库
+let isFlushingInProgress = false;
 async function flushBuffers() {
   if (!state.currentSessionId) return;
+  if (isFlushingInProgress) return; // 防并发重入（alarm + interval 可能同时触发）
+  isFlushingInProgress = true;
 
   const sessionId = state.currentSessionId;
 
+  try {
   // 批量写入评论
   if (commentBuffer.length > 0) {
     const comments = commentBuffer.map(c => ({
@@ -297,6 +340,114 @@ async function flushBuffers() {
       console.error('[Background] Failed to bulk add likes:', e);
     }
   }
+
+  // 批量写入商品推荐
+  if (shoppingBuffer.length > 0) {
+    const items = shoppingBuffer.map(s => ({
+      sessionId, productName: s.productName, productPrice: s.productPrice,
+      shopName: s.shopName, productImageUrl: s.productImageUrl, timestamp: new Date(s.timestamp),
+    }));
+    const toFlush = [...shoppingBuffer];
+    try {
+      await db.shoppings.bulkAdd(items);
+      shoppingBuffer = shoppingBuffer.filter(s => !toFlush.includes(s));
+    } catch (e) {
+      console.error('[Background] Failed to bulk add shoppings:', e);
+    }
+  }
+
+  // 批量写入红包（逐条重试去重）
+  if (envelopeBuffer.length > 0) {
+    const items = envelopeBuffer.map(e => ({
+      sessionId, envelopeId: e.envelopeId, senderNickname: e.senderNickname,
+      diamondCount: e.diamondCount, participantCount: e.participantCount, timestamp: new Date(e.timestamp),
+    }));
+    const toFlush = [...envelopeBuffer];
+    try {
+      await db.envelopes.bulkAdd(items);
+      envelopeBuffer = envelopeBuffer.filter(e => !toFlush.includes(e));
+    } catch (err) {
+      const succeeded = new Set<typeof toFlush[number]>();
+      for (let i = 0; i < items.length; i++) {
+        try { await db.envelopes.add(items[i]); succeeded.add(toFlush[i]); } catch { /* dup */ }
+      }
+      envelopeBuffer = envelopeBuffer.filter(e => !succeeded.has(e));
+    }
+  }
+
+  // 批量写入问答（逐条重试去重）
+  if (questionBuffer.length > 0) {
+    const items = questionBuffer.map(q => ({
+      sessionId, questionId: q.questionId, userId: q.userId, username: q.username,
+      nickname: q.nickname, content: q.content, timestamp: new Date(q.timestamp),
+    }));
+    const toFlush = [...questionBuffer];
+    try {
+      await db.questions.bulkAdd(items);
+      questionBuffer = questionBuffer.filter(q => !toFlush.includes(q));
+    } catch (err) {
+      const succeeded = new Set<typeof toFlush[number]>();
+      for (let i = 0; i < items.length; i++) {
+        try { await db.questions.add(items[i]); succeeded.add(toFlush[i]); } catch { /* dup */ }
+      }
+      questionBuffer = questionBuffer.filter(q => !succeeded.has(q));
+    }
+  }
+
+  // 批量写入 PK 积分
+  if (battleScoreBuffer.length > 0) {
+    const items = battleScoreBuffer.map(b => ({
+      sessionId, battleId: b.battleId, battleItems: b.battleItems, timestamp: new Date(b.timestamp),
+    }));
+    const toFlush = [...battleScoreBuffer];
+    try {
+      await db.battleScores.bulkAdd(items);
+      battleScoreBuffer = battleScoreBuffer.filter(b => !toFlush.includes(b));
+    } catch (e) {
+      console.error('[Background] Failed to bulk add battleScores:', e);
+    }
+  }
+
+  // 批量写入表情
+  if (emoteBuffer.length > 0) {
+    const items = emoteBuffer.map(e => ({
+      sessionId, userId: e.userId, username: e.username, nickname: e.nickname,
+      emoteId: e.emoteId, emoteImageUrl: e.emoteImageUrl, timestamp: new Date(e.timestamp),
+    }));
+    const toFlush = [...emoteBuffer];
+    try {
+      await db.emotes.bulkAdd(items);
+      emoteBuffer = emoteBuffer.filter(e => !toFlush.includes(e));
+    } catch (e) {
+      console.error('[Background] Failed to bulk add emotes:', e);
+    }
+  }
+
+  // 批量写入弹幕
+  if (barrageBuffer.length > 0) {
+    const items = barrageBuffer.map(b => ({
+      sessionId, userId: b.userId, username: b.username, nickname: b.nickname,
+      content: b.content, barrageType: b.barrageType, timestamp: new Date(b.timestamp),
+    }));
+    const toFlush = [...barrageBuffer];
+    try {
+      await db.barrages.bulkAdd(items);
+      barrageBuffer = barrageBuffer.filter(b => !toFlush.includes(b));
+    } catch (e) {
+      console.error('[Background] Failed to bulk add barrages:', e);
+    }
+  }
+  // 定期持久化点赞数，防 SW 崩溃丢失
+  if (state.currentSessionId && state.likeCount > 0) {
+    try {
+      await db.sessions.update(state.currentSessionId, { totalLikes: state.likeCount });
+    } catch (e) {
+      console.error('[Background] Failed to persist likeCount:', e);
+    }
+  }
+  } finally {
+    isFlushingInProgress = false;
+  }
 }
 
 function startFlushTimer() {
@@ -320,15 +471,16 @@ function stopFlushTimer() {
 
 async function processBufferedEvents() {
   if (!isSessionReady || !state.currentSessionId) return;
-
-  for (const message of eventBuffer) {
+  const toProcess = [...eventBuffer];
+  eventBuffer = [];
+  for (const message of toProcess) {
+    if (!isSessionReady || !state.currentSessionId) break;
     await handleWsMessage(message, false);
   }
-  eventBuffer = [];
 }
 
 async function handleWsMessage(message: WsMessage, shouldBuffer = true) {
-  if (!isSessionReady && shouldBuffer && ['comment', 'gift', 'like', 'roomUser', 'follow', 'share', 'subscribe'].includes(message.type)) {
+  if (!isSessionReady && shouldBuffer && ['comment', 'gift', 'like', 'roomUser', 'follow', 'share', 'subscribe', 'oecLiveShopping', 'envelope', 'questionNew', 'linkMicArmies', 'emote', 'barrage'].includes(message.type)) {
     // P1: 限制 eventBuffer 大小，丢弃最旧的事件
     if (eventBuffer.length >= MAX_EVENT_BUFFER) {
       eventBuffer.shift();
@@ -362,6 +514,11 @@ async function handleWsMessage(message: WsMessage, shouldBuffer = true) {
         startFlushTimer();
       } catch (e) {
         console.error('Failed to create session:', e);
+        state.status = 'error';
+        state.errorMessage = 'Session 创建失败，数据无法记录';
+        isSessionReady = false;
+        eventBuffer = [];
+        broadcastState();
       }
       break;
 
@@ -398,15 +555,10 @@ async function handleWsMessage(message: WsMessage, shouldBuffer = true) {
 
         // 添加到最近评论列表（用于热词统计）
         recentComments.push(message.comment);
-        if (recentComments.length > MAX_RECENT_COMMENTS) {
-          recentComments = recentComments.slice(-MAX_RECENT_COMMENTS);
-        }
+        if (recentComments.length > MAX_RECENT_COMMENTS) recentComments.shift();
 
-        // 添加到评论详情列表（用于 UI 展示）
-        recentCommentsDetail.push({ nickname: message.nickname, content: message.comment });
-        if (recentCommentsDetail.length > MAX_RECENT_COMMENTS) {
-          recentCommentsDetail = recentCommentsDetail.slice(-MAX_RECENT_COMMENTS);
-        }
+        recentCommentsDetail.push({ nickname: message.nickname, content: message.comment, timestamp: message.timestamp });
+        if (recentCommentsDetail.length > MAX_RECENT_COMMENTS) recentCommentsDetail.shift();
 
         if (commentBuffer.length >= BUFFER_SIZE) {
           await flushBuffers();
@@ -505,6 +657,123 @@ async function handleWsMessage(message: WsMessage, shouldBuffer = true) {
         state.subscribeCount++;
       }
       break;
+
+    // ========== Tier 1: 电商/红包/排名 ==========
+
+    case 'oecLiveShopping':
+      if (state.currentSessionId) {
+        shoppingBuffer.push({
+          productName: message.productName,
+          productPrice: message.productPrice,
+          shopName: message.shopName,
+          productImageUrl: message.productImageUrl,
+          timestamp: message.timestamp,
+        });
+        state.shoppingCount++;
+        recentShoppings.push({ productName: message.productName, productPrice: message.productPrice, shopName: message.shopName, timestamp: message.timestamp });
+        if (recentShoppings.length > MAX_RECENT_ITEMS) recentShoppings.shift();
+      }
+      break;
+
+    case 'envelope':
+      if (state.currentSessionId) {
+        envelopeBuffer.push({
+          envelopeId: message.envelopeId,
+          senderNickname: message.senderNickname,
+          diamondCount: message.diamondCount,
+          participantCount: message.participantCount,
+          timestamp: message.timestamp,
+        });
+        state.envelopeCount++;
+        state.envelopeDiamonds += message.diamondCount || 0;
+      }
+      break;
+
+    case 'hourlyRank':
+      state.currentRank = { rankType: message.rankType, rank: message.rank };
+      break;
+
+    case 'rankUpdate':
+      if (message.updates && message.updates.length > 0) {
+        state.currentRank = { rankType: message.updates[0].rankType, rank: message.updates[0].rank };
+      }
+      break;
+
+    case 'rankText':
+      // 仅广播，不持久化
+      break;
+
+    // ========== Tier 2: PK/问答/表情/弹幕 ==========
+
+    case 'questionNew':
+      if (state.currentSessionId) {
+        questionBuffer.push({
+          questionId: message.questionId,
+          userId: message.userId,
+          username: message.username,
+          nickname: message.nickname,
+          content: message.content,
+          timestamp: message.timestamp,
+        });
+        state.questionCount++;
+        recentQuestions.push({ nickname: message.nickname, content: message.content, timestamp: message.timestamp });
+        if (recentQuestions.length > MAX_RECENT_ITEMS) recentQuestions.shift();
+      }
+      break;
+
+    case 'linkMicArmies':
+      if (state.currentSessionId) {
+        battleScoreBuffer.push({
+          battleId: message.battleId,
+          battleItems: message.battleItems.map(i => ({ hostUserId: i.hostUserId, hostNickname: i.hostNickname, points: i.points })),
+          timestamp: message.timestamp,
+        });
+      }
+      break;
+
+    case 'emote':
+      if (state.currentSessionId) {
+        emoteBuffer.push({
+          userId: message.userId,
+          username: message.username,
+          nickname: message.nickname,
+          emoteId: message.emoteId,
+          emoteImageUrl: message.emoteImageUrl,
+          timestamp: message.timestamp,
+        });
+        state.emoteCount++;
+        if (emoteBuffer.length >= BUFFER_SIZE) {
+          await flushBuffers();
+        }
+      }
+      break;
+
+    case 'barrage':
+      if (state.currentSessionId) {
+        barrageBuffer.push({
+          userId: message.userId,
+          username: message.username,
+          nickname: message.nickname,
+          content: message.content,
+          barrageType: message.barrageType,
+          timestamp: message.timestamp,
+        });
+        state.barrageCount++;
+        recentBarrages.push({ nickname: message.nickname, content: message.content, barrageType: message.barrageType, timestamp: message.timestamp });
+        if (recentBarrages.length > MAX_RECENT_ITEMS) recentBarrages.shift();
+        if (barrageBuffer.length >= BUFFER_SIZE) {
+          await flushBuffers();
+        }
+      }
+      break;
+
+    case 'linkMicBattle':
+      state.currentBattle = {
+        battleId: message.battleId,
+        status: message.status,
+        anchors: message.anchors.map(a => ({ userId: a.userId, nickname: a.nickname })),
+      };
+      break;
   }
 
   broadcastState();
@@ -519,7 +788,7 @@ async function handleDisconnect(
   reason: 'streamEnd' | 'userDisconnect' | 'transportError' | 'timeout' = 'userDisconnect',
 ) {
   // 防重入守卫：onerror 和 onclose 几乎同时触发时，只执行一次
-  if (isDisconnecting && !sessionId) return;
+  if (isDisconnecting) return;
   isDisconnecting = true;
 
   // B6: 清除 ACK 等待
@@ -561,6 +830,14 @@ function resetState() {
     followCount: 0,
     shareCount: 0,
     subscribeCount: 0,
+    shoppingCount: 0,
+    envelopeCount: 0,
+    envelopeDiamonds: 0,
+    questionCount: 0,
+    emoteCount: 0,
+    barrageCount: 0,
+    currentRank: null,
+    currentBattle: null,
     topViewers: [],
     startTime: null,
     currentSessionId: null,
@@ -575,8 +852,17 @@ function resetState() {
   shareBuffer = [];
   subscribeBuffer = [];
   likeBuffer = [];
+  shoppingBuffer = [];
+  envelopeBuffer = [];
+  questionBuffer = [];
+  battleScoreBuffer = [];
+  emoteBuffer = [];
+  barrageBuffer = [];
   recentComments = [];
   recentCommentsDetail = [];
+  recentShoppings = [];
+  recentQuestions = [];
+  recentBarrages = [];
 }
 
 let wsPingTimer: ReturnType<typeof setInterval> | null = null;
@@ -614,7 +900,9 @@ async function connectToServer() {
 
     ws.onopen = () => {
       console.log('[Background] WebSocket connected');
-      state.status = 'disconnected';
+      if (state.status !== 'connected') {
+        state.status = 'disconnected';
+      }
       broadcastState();
       // B2: 每 25s 发 ping 保持连接
       wsPingTimer = setInterval(() => {
@@ -739,13 +1027,7 @@ async function exportSession(): Promise<string | null> {
   const session = await dbHelper.getSession(state.currentSessionId);
   if (!session) return null;
 
-  const comments = await dbHelper.getCommentsBySession(state.currentSessionId);
-  const gifts = await dbHelper.getGiftsBySession(state.currentSessionId);
-  const viewerCounts = await dbHelper.getViewerCountsBySession(state.currentSessionId);
-  const follows = await dbHelper.getFollowsBySession(state.currentSessionId);
-  const shares = await dbHelper.getSharesBySession(state.currentSessionId);
-  const subscribes = await dbHelper.getSubscribesBySession(state.currentSessionId);
-  const stats = await dbHelper.getSessionStats(state.currentSessionId);
+  const { comments, gifts, viewerCounts, follows, shares, subscribes, shoppings, envelopes, questions, battleScores, emotes, barrages, stats } = await dbHelper.getAllSessionData(state.currentSessionId);
 
   const endTime = session.endTime || new Date();
   const duration = Math.round((endTime.getTime() - session.startTime.getTime()) / 1000);
@@ -799,13 +1081,49 @@ async function exportSession(): Promise<string | null> {
       subMonth: s.subMonth,
       timestamp: s.timestamp.toISOString(),
     })),
+    shoppings: shoppings.map(s => ({
+      productName: s.productName,
+      productPrice: s.productPrice,
+      shopName: s.shopName,
+      timestamp: s.timestamp.toISOString(),
+    })),
+    envelopes: envelopes.map(e => ({
+      senderNickname: e.senderNickname,
+      diamondCount: e.diamondCount,
+      participantCount: e.participantCount,
+      timestamp: e.timestamp.toISOString(),
+    })),
+    questions: questions.map(q => ({
+      username: q.username,
+      nickname: q.nickname,
+      content: q.content,
+      timestamp: q.timestamp.toISOString(),
+    })),
+    battleScores: battleScores.map(b => ({
+      battleId: b.battleId,
+      battleItems: b.battleItems.map(i => ({ hostNickname: i.hostNickname, points: i.points })),
+      timestamp: b.timestamp.toISOString(),
+    })),
+    emotes: emotes.map(e => ({
+      username: e.username,
+      nickname: e.nickname,
+      emoteId: e.emoteId,
+      timestamp: e.timestamp.toISOString(),
+    })),
+    barrages: barrages.map(b => ({
+      username: b.username,
+      nickname: b.nickname,
+      content: b.content,
+      barrageType: b.barrageType,
+      timestamp: b.timestamp.toISOString(),
+    })),
   };
 
   return JSON.stringify(exportData, null, 2);
 }
 
 export default defineBackground(() => {
-  console.log('TikTok Live Extension Background Script v2.3 loaded');
+  console.log('TikTok Live Extension Background Script v3.0 loaded');
 
   // B3: SW 启动时恢复活跃 session
   async function recoverActiveSession() {
@@ -828,8 +1146,19 @@ export default defineBackground(() => {
         state.shareCount = stats.totalShares;
         state.subscribeCount = stats.totalSubscribes;
         state.likeCount = activeSession.totalLikes || 0;
-        state.viewerCount = stats.peakViewers;
+        // Recover last known viewer count (not peak) for accurate current display
+        const viewerRecords = await dbHelper.getViewerCountsBySession(activeSession.id);
+        state.viewerCount = viewerRecords.length > 0
+          ? viewerRecords[viewerRecords.length - 1].count
+          : 0;
+        state.shoppingCount = stats.totalShoppings;
+        state.envelopeCount = stats.totalEnvelopes;
+        state.envelopeDiamonds = stats.totalEnvelopeDiamonds;
+        state.questionCount = stats.totalQuestions;
+        state.emoteCount = stats.totalEmotes;
+        state.barrageCount = stats.totalBarrages;
 
+        stopFlushTimer();
         startFlushTimer();
         broadcastState();
       }
@@ -844,10 +1173,11 @@ export default defineBackground(() => {
     connectToServer();
   });
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (sender.id !== chrome.runtime.id) return;
     switch (message.type) {
       case 'getState':
-        sendResponse({ state, wsUrl, recentComments, recentCommentsDetail });
+        sendResponse({ state, wsUrl, recentComments, recentCommentsDetail, recentShoppings, recentQuestions, recentBarrages });
         break;
 
       case 'getConfig':
@@ -888,7 +1218,9 @@ export default defineBackground(() => {
         return true;
 
       case 'reconnectServer':
-        connectToServer();
+        disconnectFromServer(); // 先清理旧连接，防 CLOSING 状态下双连接
+        shouldReconnect = true; // disconnectFromServer 会设为 false，这里恢复
+        setTimeout(() => connectToServer(), 100);
         sendResponse({ success: true });
         break;
 

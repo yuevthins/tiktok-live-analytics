@@ -4,7 +4,7 @@
 
 import { CSS_STYLES } from './styles';
 import { generateChartScript, type ViewerDataPoint } from './chart-config';
-import type { Comment, Gift, Follow, Share, Subscribe } from '../../types';
+import type { Comment, Gift, Follow, Share, Subscribe, Shopping, Envelope, Question, BattleScore, EmoteRecord, Barrage } from '../../types';
 import type { WordCount } from '../word-stats';
 
 export interface HtmlExportData {
@@ -23,6 +23,12 @@ export interface HtmlExportData {
     totalFollows: number;
     totalShares: number;
     totalSubscribes: number;
+    totalShoppings: number;
+    totalEnvelopes: number;
+    totalEnvelopeDiamonds: number;
+    totalQuestions: number;
+    totalEmotes: number;
+    totalBarrages: number;
     peakViewers: number;
     avgViewers: number;
   };
@@ -31,6 +37,12 @@ export interface HtmlExportData {
   follows: Follow[];
   shares: Share[];
   subscribes: Subscribe[];
+  shoppings: Shopping[];
+  envelopes: Envelope[];
+  questions: Question[];
+  battleScores: BattleScore[];
+  emotes: EmoteRecord[];
+  barrages: Barrage[];
   viewerCounts: ViewerDataPoint[];
   hotWords: WordCount[];
   chartjsCode: string;
@@ -208,6 +220,30 @@ function generateStatsGrid(stats: HtmlExportData['statistics'], duration: number
         </div>
         <div class="stat-value">${formatNumber(stats.totalSubscribes)}</div>
         <div class="stat-sub">Paid subscribers</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">
+          <span class="stat-label-icon">🛍</span>
+          PRODUCTS
+        </div>
+        <div class="stat-value">${formatNumber(stats.totalShoppings)}</div>
+        <div class="stat-sub">Product recommendations</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">
+          <span class="stat-label-icon">🧧</span>
+          ENVELOPES
+        </div>
+        <div class="stat-value">${formatNumber(stats.totalEnvelopes)}</div>
+        <div class="stat-sub">${formatNumber(stats.totalEnvelopeDiamonds)} diamonds</div>
+      </div>
+      <div class="stat-cell">
+        <div class="stat-label">
+          <span class="stat-label-icon">❓</span>
+          QUESTIONS
+        </div>
+        <div class="stat-value">${formatNumber(stats.totalQuestions)}</div>
+        <div class="stat-sub">Viewer questions</div>
       </div>
     </div>`;
 }

@@ -113,6 +113,102 @@ export interface WsPongMessage {
   type: 'pong';
 }
 
+// ========== Tier 1: 电商/红包/排名 ==========
+
+export interface WsShoppingMessage {
+  type: 'oecLiveShopping';
+  productName: string;
+  productPrice: string;
+  shopName: string;
+  productImageUrl?: string;
+  timestamp: number;
+}
+
+export interface WsEnvelopeMessage {
+  type: 'envelope';
+  envelopeId: string;
+  senderUserId: string;
+  senderNickname: string;
+  diamondCount: number;
+  participantCount: number;
+  timestamp: number;
+}
+
+export interface WsHourlyRankMessage {
+  type: 'hourlyRank';
+  rankType: string;
+  rank: number;
+  timestamp: number;
+}
+
+export interface WsRankUpdateMessage {
+  type: 'rankUpdate';
+  updates: Array<{ rankType: string; rank: number }>;
+  timestamp: number;
+}
+
+export interface WsRankTextMessage {
+  type: 'rankText';
+  text: string;
+  timestamp: number;
+}
+
+// ========== Tier 2: PK/问答/表情/弹幕 ==========
+
+export interface WsQuestionMessage {
+  type: 'questionNew';
+  questionId: string;
+  userId: string;
+  username: string;
+  nickname: string;
+  content: string;
+  timestamp: number;
+}
+
+export interface WsLinkMicArmiesMessage {
+  type: 'linkMicArmies';
+  battleId: string;
+  battleItems: Array<{
+    odl: string;
+    hostUserId: string;
+    hostNickname: string;
+    points: number;
+  }>;
+  timestamp: number;
+}
+
+export interface WsEmoteMessage {
+  type: 'emote';
+  userId: string;
+  username: string;
+  nickname: string;
+  emoteId: string;
+  emoteImageUrl?: string;
+  timestamp: number;
+}
+
+export interface WsBarrageMessage {
+  type: 'barrage';
+  userId: string;
+  username: string;
+  nickname: string;
+  content: string;
+  barrageType: string;
+  timestamp: number;
+}
+
+export interface WsLinkMicBattleMessage {
+  type: 'linkMicBattle';
+  battleId: string;
+  status: number;
+  anchors: Array<{
+    userId: string;
+    nickname: string;
+    profilePictureUrl?: string;
+  }>;
+  timestamp: number;
+}
+
 export type WsMessage =
   | WsStatusMessage
   | WsConnectedMessage
@@ -127,7 +223,17 @@ export type WsMessage =
   | WsFollowMessage
   | WsShareMessage
   | WsSubscribeMessage
-  | WsPongMessage;
+  | WsPongMessage
+  | WsShoppingMessage
+  | WsEnvelopeMessage
+  | WsHourlyRankMessage
+  | WsRankUpdateMessage
+  | WsRankTextMessage
+  | WsQuestionMessage
+  | WsLinkMicArmiesMessage
+  | WsEmoteMessage
+  | WsBarrageMessage
+  | WsLinkMicBattleMessage;
 
 // 数据库模型
 export interface Session {
@@ -221,6 +327,73 @@ export interface Like {
   timestamp: Date;
 }
 
+// ========== 新增 DB 模型（v6） ==========
+
+export interface Shopping {
+  id?: number;
+  sessionId: number;
+  productName: string;
+  productPrice: string;
+  shopName: string;
+  productImageUrl?: string;
+  timestamp: Date;
+}
+
+export interface Envelope {
+  id?: number;
+  sessionId: number;
+  envelopeId: string;
+  senderNickname: string;
+  diamondCount: number;
+  participantCount: number;
+  timestamp: Date;
+}
+
+export interface Question {
+  id?: number;
+  sessionId: number;
+  questionId: string;
+  userId: string;
+  username: string;
+  nickname: string;
+  content: string;
+  timestamp: Date;
+}
+
+export interface BattleScore {
+  id?: number;
+  sessionId: number;
+  battleId: string;
+  battleItems: Array<{
+    hostUserId: string;
+    hostNickname: string;
+    points: number;
+  }>;
+  timestamp: Date;
+}
+
+export interface EmoteRecord {
+  id?: number;
+  sessionId: number;
+  userId: string;
+  username: string;
+  nickname: string;
+  emoteId: string;
+  emoteImageUrl?: string;
+  timestamp: Date;
+}
+
+export interface Barrage {
+  id?: number;
+  sessionId: number;
+  userId: string;
+  username: string;
+  nickname: string;
+  content: string;
+  barrageType: string;
+  timestamp: Date;
+}
+
 // 导出格式
 export interface ExportData {
   sessionInfo: {
@@ -238,6 +411,12 @@ export interface ExportData {
     totalFollows: number;
     totalShares: number;
     totalSubscribes: number;
+    totalShoppings: number;
+    totalEnvelopes: number;
+    totalEnvelopeDiamonds: number;
+    totalQuestions: number;
+    totalEmotes: number;
+    totalBarrages: number;
     peakViewers: number;
     avgViewers: number;
   };
@@ -280,6 +459,42 @@ export interface ExportData {
     username: string;
     nickname: string;
     subMonth: number;
+    timestamp: string;
+  }>;
+  shoppings: Array<{
+    productName: string;
+    productPrice: string;
+    shopName: string;
+    timestamp: string;
+  }>;
+  envelopes: Array<{
+    senderNickname: string;
+    diamondCount: number;
+    participantCount: number;
+    timestamp: string;
+  }>;
+  questions: Array<{
+    username: string;
+    nickname: string;
+    content: string;
+    timestamp: string;
+  }>;
+  battleScores: Array<{
+    battleId: string;
+    battleItems: Array<{ hostNickname: string; points: number }>;
+    timestamp: string;
+  }>;
+  emotes: Array<{
+    username: string;
+    nickname: string;
+    emoteId: string;
+    timestamp: string;
+  }>;
+  barrages: Array<{
+    username: string;
+    nickname: string;
+    content: string;
+    barrageType: string;
     timestamp: string;
   }>;
 }

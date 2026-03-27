@@ -7,13 +7,7 @@ export async function exportSessionToJson(sessionId: number): Promise<void> {
     throw new Error('Session not found');
   }
 
-  const comments = await dbHelper.getCommentsBySession(sessionId);
-  const gifts = await dbHelper.getGiftsBySession(sessionId);
-  const viewerCounts = await dbHelper.getViewerCountsBySession(sessionId);
-  const follows = await dbHelper.getFollowsBySession(sessionId);
-  const shares = await dbHelper.getSharesBySession(sessionId);
-  const subscribes = await dbHelper.getSubscribesBySession(sessionId);
-  const stats = await dbHelper.getSessionStats(sessionId);
+  const { comments, gifts, viewerCounts, follows, shares, subscribes, shoppings, envelopes, questions, battleScores, emotes, barrages, stats } = await dbHelper.getAllSessionData(sessionId);
 
   const endTime = session.endTime || new Date();
   const duration = Math.round((endTime.getTime() - session.startTime.getTime()) / 1000);
@@ -66,6 +60,30 @@ export async function exportSessionToJson(sessionId: number): Promise<void> {
       nickname: s.nickname,
       subMonth: s.subMonth,
       timestamp: s.timestamp.toISOString(),
+    })),
+    shoppings: shoppings.map(s => ({
+      productName: s.productName, productPrice: s.productPrice, shopName: s.shopName,
+      timestamp: s.timestamp.toISOString(),
+    })),
+    envelopes: envelopes.map(e => ({
+      senderNickname: e.senderNickname, diamondCount: e.diamondCount, participantCount: e.participantCount,
+      timestamp: e.timestamp.toISOString(),
+    })),
+    questions: questions.map(q => ({
+      username: q.username, nickname: q.nickname, content: q.content,
+      timestamp: q.timestamp.toISOString(),
+    })),
+    battleScores: battleScores.map(b => ({
+      battleId: b.battleId, battleItems: b.battleItems.map(i => ({ hostNickname: i.hostNickname, points: i.points })),
+      timestamp: b.timestamp.toISOString(),
+    })),
+    emotes: emotes.map(e => ({
+      username: e.username, nickname: e.nickname, emoteId: e.emoteId,
+      timestamp: e.timestamp.toISOString(),
+    })),
+    barrages: barrages.map(b => ({
+      username: b.username, nickname: b.nickname, content: b.content, barrageType: b.barrageType,
+      timestamp: b.timestamp.toISOString(),
     })),
   };
 

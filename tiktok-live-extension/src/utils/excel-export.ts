@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { Comment, Gift, ViewerCount, Follow, Share, Subscribe } from '../types';
+import type { Comment, Gift, ViewerCount, Follow, Share, Subscribe, Shopping, Envelope, Question, BattleScore, EmoteRecord, Barrage } from '../types';
 
 interface ExcelExportData {
   sessionInfo: {
@@ -17,6 +17,12 @@ interface ExcelExportData {
     totalFollows: number;
     totalShares: number;
     totalSubscribes: number;
+    totalShoppings: number;
+    totalEnvelopes: number;
+    totalEnvelopeDiamonds: number;
+    totalQuestions: number;
+    totalEmotes: number;
+    totalBarrages: number;
     peakViewers: number;
     avgViewers: number;
   };
@@ -26,6 +32,12 @@ interface ExcelExportData {
   follows: Follow[];
   shares: Share[];
   subscribes: Subscribe[];
+  shoppings?: Shopping[];
+  envelopes?: Envelope[];
+  questions?: Question[];
+  battleScores?: BattleScore[];
+  emotes?: EmoteRecord[];
+  barrages?: Barrage[];
 }
 
 export function exportToExcel(data: ExcelExportData, filename: string): void {
@@ -50,6 +62,12 @@ export function exportToExcel(data: ExcelExportData, filename: string): void {
     ['总关注数', data.statistics.totalFollows],
     ['总分享数', data.statistics.totalShares],
     ['总订阅数', data.statistics.totalSubscribes],
+    ['总商品推荐', data.statistics.totalShoppings],
+    ['总红包数', data.statistics.totalEnvelopes],
+    ['红包钻石总额', data.statistics.totalEnvelopeDiamonds],
+    ['总问答数', data.statistics.totalQuestions],
+    ['总表情数', data.statistics.totalEmotes],
+    ['总VIP弹幕', data.statistics.totalBarrages],
     ['峰值观众', data.statistics.peakViewers],
     ['平均观众', data.statistics.avgViewers],
   ];
@@ -148,6 +166,84 @@ export function exportToExcel(data: ExcelExportData, filename: string): void {
     const wsSubscribes = XLSX.utils.json_to_sheet(subscribeRows);
     wsSubscribes['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 10 }];
     XLSX.utils.book_append_sheet(wb, wsSubscribes, '订阅');
+  }
+
+  // Sheet 8: 商品推荐
+  if (data.shoppings && data.shoppings.length > 0) {
+    const rows = data.shoppings.map(s => ({
+      '时间': formatTime(s.timestamp),
+      '商品名称': s.productName,
+      '价格': s.productPrice,
+      '店铺名': s.shopName,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, ws, '商品推荐');
+  }
+
+  // Sheet 9: 红包
+  if (data.envelopes && data.envelopes.length > 0) {
+    const rows = data.envelopes.map(e => ({
+      '时间': formatTime(e.timestamp),
+      '发送者': e.senderNickname,
+      '钻石数': e.diamondCount,
+      '参与人数': e.participantCount,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 10 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws, '红包');
+  }
+
+  // Sheet 10: 问答
+  if (data.questions && data.questions.length > 0) {
+    const rows = data.questions.map(q => ({
+      '时间': formatTime(q.timestamp),
+      '用户名': q.username,
+      '昵称': q.nickname,
+      '问题内容': q.content,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 50 }];
+    XLSX.utils.book_append_sheet(wb, ws, '问答');
+  }
+
+  // Sheet 11: PK 积分
+  if (data.battleScores && data.battleScores.length > 0) {
+    const rows = data.battleScores.map(b => ({
+      '时间': formatTime(b.timestamp),
+      '对战ID': b.battleId,
+      '队伍积分': b.battleItems.map(i => `${i.hostNickname}: ${i.points}`).join(' | '),
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'PK积分');
+  }
+
+  // Sheet 12: 表情
+  if (data.emotes && data.emotes.length > 0) {
+    const rows = data.emotes.map(e => ({
+      '时间': formatTime(e.timestamp),
+      '用户名': e.username,
+      '昵称': e.nickname,
+      '表情ID': e.emoteId,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, ws, '表情');
+  }
+
+  // Sheet 13: VIP 弹幕
+  if (data.barrages && data.barrages.length > 0) {
+    const rows = data.barrages.map(b => ({
+      '时间': formatTime(b.timestamp),
+      '类型': b.barrageType,
+      '用户名': b.username,
+      '昵称': b.nickname,
+      '内容': b.content,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 20 }, { wch: 10 }, { wch: 20 }, { wch: 20 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'VIP弹幕');
   }
 
   // 生成并下载

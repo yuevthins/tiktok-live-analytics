@@ -53,13 +53,9 @@ async function exportSession(sessionId: number) {
     const session = await dbHelper.getSession(sessionId);
     if (!session) return;
 
-    const comments = await dbHelper.getCommentsBySession(sessionId);
-    const viewerCounts = await dbHelper.getViewerCountsBySession(sessionId);
-    const gifts = await dbHelper.getGiftsBySession(sessionId);
-    const follows = await dbHelper.getFollowsBySession(sessionId);
-    const shares = await dbHelper.getSharesBySession(sessionId);
-    const subscribes = await dbHelper.getSubscribesBySession(sessionId);
-    const stats = await dbHelper.getSessionStats(sessionId);
+    const { comments, viewerCounts, gifts, follows, shares, subscribes,
+      shoppings: shoppingsData, envelopes: envelopesData, questions: questionsData,
+      battleScores: battleScoresData, emotes: emotesData, barrages: barragesData, stats } = await dbHelper.getAllSessionData(sessionId);
 
     const endTime = session.endTime || new Date();
     const duration = Math.round((new Date(endTime).getTime() - new Date(session.startTime).getTime()) / 1000);
@@ -113,6 +109,30 @@ async function exportSession(sessionId: number) {
         subMonth: s.subMonth,
         timestamp: new Date(s.timestamp).toISOString(),
       })),
+      shoppings: shoppingsData.map(s => ({
+        productName: s.productName, productPrice: s.productPrice, shopName: s.shopName,
+        timestamp: new Date(s.timestamp).toISOString(),
+      })),
+      envelopes: envelopesData.map(e => ({
+        senderNickname: e.senderNickname, diamondCount: e.diamondCount, participantCount: e.participantCount,
+        timestamp: new Date(e.timestamp).toISOString(),
+      })),
+      questions: questionsData.map(q => ({
+        username: q.username, nickname: q.nickname, content: q.content,
+        timestamp: new Date(q.timestamp).toISOString(),
+      })),
+      battleScores: battleScoresData.map(b => ({
+        battleId: b.battleId, battleItems: b.battleItems.map(i => ({ hostNickname: i.hostNickname, points: i.points })),
+        timestamp: new Date(b.timestamp).toISOString(),
+      })),
+      emotes: emotesData.map(e => ({
+        username: e.username, nickname: e.nickname, emoteId: e.emoteId,
+        timestamp: new Date(e.timestamp).toISOString(),
+      })),
+      barrages: barragesData.map(b => ({
+        username: b.username, nickname: b.nickname, content: b.content, barrageType: b.barrageType,
+        timestamp: new Date(b.timestamp).toISOString(),
+      })),
     };
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
@@ -150,15 +170,7 @@ async function exportSessionExcel(sessionId: number) {
     const session = await dbHelper.getSession(sessionId);
     if (!session) return;
 
-    const [comments, gifts, viewerCounts, follows, shares, subscribes, stats] = await Promise.all([
-      dbHelper.getCommentsBySession(sessionId),
-      dbHelper.getGiftsBySession(sessionId),
-      dbHelper.getViewerCountsBySession(sessionId),
-      dbHelper.getFollowsBySession(sessionId),
-      dbHelper.getSharesBySession(sessionId),
-      dbHelper.getSubscribesBySession(sessionId),
-      dbHelper.getSessionStats(sessionId),
-    ]);
+    const { comments, gifts, viewerCounts, follows, shares, subscribes, shoppings, envelopes, questions, battleScores, emotes, barrages, stats } = await dbHelper.getAllSessionData(sessionId);
     const totalLikes = await getLikeCount(sessionId, session);
 
     const endTime = session.endTime || new Date();
@@ -184,6 +196,12 @@ async function exportSessionExcel(sessionId: number) {
       follows,
       shares,
       subscribes,
+      shoppings,
+      envelopes,
+      questions,
+      battleScores,
+      emotes,
+      barrages,
     }, filename);
   } catch (e) {
     console.error('Excel export failed:', e);
@@ -348,18 +366,18 @@ onMounted(loadSessions);
 <style scoped>
 /* ========== Stripe Design Tokens ========== */
 .history-container {
-  --stripe-bg: #f6f9fc;
-  --stripe-surface: #ffffff;
-  --stripe-border: #e3e8ee;
-  --stripe-primary: #635bff;
-  --stripe-text: #0a2540;
-  --stripe-text-secondary: #425466;
-  --stripe-text-muted: #8898aa;
+  --stripe-bg: var(--bg-base);
+  --stripe-surface: var(--bg-card);
+  --stripe-border: var(--border);
+  --stripe-primary: var(--accent-primary);
+  --stripe-text: var(--text-primary);
+  --stripe-text-secondary: var(--text-secondary);
+  --stripe-text-muted: var(--text-muted);
   --stripe-success: #0e6245;
-  --stripe-success-bg: #d4edda;
-  --stripe-error: #cd3d64;
-  --stripe-error-bg: #ffe0e6;
-  --stripe-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  --stripe-success-bg: rgba(14, 98, 69, 0.15);
+  --stripe-error: var(--accent-live);
+  --stripe-error-bg: rgba(239, 68, 68, 0.15);
+  --stripe-shadow: var(--shadow-sm);
 
   display: flex;
   flex-direction: column;

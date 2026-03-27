@@ -1,5 +1,5 @@
 /**
- * TikTok 直播评论采集服务 v2.3
+ * TikTok 直播评论采集服务 v3.0
  *
  * 功能：
  * - 广播事件：comment, roomUser, gift, like, member, follow, share, subscribe
@@ -34,6 +34,7 @@ let currentConnectionToken = null;
 let currentRoomId = null;
 let currentViewerCount = 0;
 let connectionStartTime = null;
+let connectTimeout = null;
 
 // 创建 HTTP 服务器（用于状态查询）
 const httpServer = http.createServer((req, res) => {
@@ -109,6 +110,10 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
+  if (clients.size >= 10) {
+    ws.close(4004, 'Too many clients');
+    return;
+  }
   console.log('[WS] 新客户端连接, origin:', origin || 'local');
   clients.add(ws);
 
@@ -125,7 +130,7 @@ wss.on('connection', (ws, req) => {
   ws.on('message', async (data) => {
     try {
       const msg = JSON.parse(data);
-      console.log('[WS] 收到消息:', msg);
+      console.log(`[WS] 收到动作: ${msg.action || msg.type || 'unknown'}`);
 
       switch (msg.action) {
         case 'connect':
@@ -202,7 +207,7 @@ async function connectToLive(username, requestingClient) {
   currentConnectionToken = connectionToken;
 
   // 安全超时：30s 内未收到 connected 事件则重置 isConnecting，防止死锁
-  const connectTimeout = setTimeout(() => {
+  connectTimeout = setTimeout(() => {
     if (isConnecting) {
       console.warn('[TikTok] 连接超时（30s），重置 isConnecting');
       isConnecting = false;
@@ -300,10 +305,10 @@ async function connectToLive(username, requestingClient) {
         type: 'roomUser',
         viewerCount: data.viewerCount,
         topViewers: data.topViewers?.map(v => ({
-          uniqueId: v.uniqueId,
-          nickname: v.nickname,
-          profilePictureUrl: v.profilePictureUrl,
-          coinCount: v.coinCount,
+          uniqueId: v.user?.uniqueId || '',
+          nickname: v.user?.nickname || '',
+          profilePictureUrl: v.user?.profilePictureUrl || '',
+          coinCount: v.coinCount || 0,
         })) || [],
         timestamp: Date.now(),
       });
@@ -414,8 +419,169 @@ async function connectToLive(username, requestingClient) {
       });
     });
 
-    await connection.connect();
+    // ========== Tier 1: 电商/红包/排名事件 ==========
+
+    // 商品推荐
+    connection.on('oecLiveShopping', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      const shopData = data.shopData || data;
+      console.log(`[商品] ${shopData.title || shopData.productName || '未知商品'}`);
+      broadcast({
+        type: 'oecLiveShopping',
+        productName: shopData.title || shopData.productName || '',
+        productPrice: shopData.price || shopData.priceStr || '',
+        shopName: shopData.shopName || '',
+        productImageUrl: shopData.imageUrl || '',
+        timestamp: Date.now(),
+      });
+    });
+
+    // 红包/宝箱
+    connection.on('envelope', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      const info = data.envelopeInfo || data;
+      console.log(`[红包] ${info.sendUserNickname || '未知'} 发了 ${info.diamondCount || 0} 钻红包`);
+      broadcast({
+        type: 'envelope',
+        envelopeId: String(info.envelopeId || info.id || Date.now()),
+        senderUserId: String(info.sendUserId || ''),
+        senderNickname: info.sendUserNickname || '',
+        diamondCount: info.diamondCount || 0,
+        participantCount: info.pilotLampNum || info.participantCount || 0,
+        timestamp: Date.now(),
+      });
+    });
+
+    // 小时榜
+    connection.on('hourlyRank', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      broadcast({
+        type: 'hourlyRank',
+        rankType: data.rankType || '',
+        rank: data.rank || 0,
+        timestamp: Date.now(),
+      });
+    });
+
+    // 排名更新
+    connection.on('rankUpdate', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      const updates = (data.updatesList || data.updates || []).map(u => ({
+        rankType: u.rankType || '',
+        rank: u.rank || 0,
+      }));
+      broadcast({
+        type: 'rankUpdate',
+        updates,
+        timestamp: Date.now(),
+      });
+    });
+
+    // 排名文本
+    connection.on('rankText', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      broadcast({
+        type: 'rankText',
+        text: data.text || data.scene?.content || '',
+        timestamp: Date.now(),
+      });
+    });
+
+    // ========== Tier 2: PK/问答/表情/弹幕事件 ==========
+
+    // 观众提问
+    connection.on('questionNew', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      const details = data.details || data;
+      console.log(`[问答] ${details.nickname || details.user?.nickname || '未知'}: ${details.text || details.content || ''}`);
+      broadcast({
+        type: 'questionNew',
+        questionId: String(details.questionId || details.id || Date.now()),
+        userId: String(details.userId || details.user?.userId || ''),
+        username: details.uniqueId || details.user?.uniqueId || '',
+        nickname: details.nickname || details.user?.nickname || '',
+        content: details.text || details.content || '',
+        timestamp: Date.now(),
+      });
+    });
+
+    // PK 军团积分
+    connection.on('linkMicArmies', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      const rawItems = data.battleItems || {};
+      const itemsList = Array.isArray(rawItems) ? rawItems : Object.values(rawItems);
+      const battleItems = itemsList.map((item) => ({
+        odl: String(item.hostUserId || ''),
+        hostUserId: String(item.hostUserId || ''),
+        hostNickname: item.hostNickname || '',
+        points: item.points || 0,
+      }));
+      console.log(`[PK积分] battleId=${data.battleId || ''} items=${battleItems.length}`);
+      broadcast({
+        type: 'linkMicArmies',
+        battleId: String(data.battleId || ''),
+        battleItems,
+        timestamp: Date.now(),
+      });
+    });
+
+    // 表情聊天
+    connection.on('emote', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      const user = data.user || data;
+      broadcast({
+        type: 'emote',
+        userId: String(user.userId || ''),
+        username: user.uniqueId || '',
+        nickname: user.nickname || '',
+        emoteId: String(data.emoteId || (data.emoteList && data.emoteList[0]?.emoteId) || ''),
+        emoteImageUrl: data.emoteImageUrl || (data.emoteList && data.emoteList[0]?.emoteImageUrl) || '',
+        timestamp: Date.now(),
+      });
+    });
+
+    // VIP 弹幕
+    connection.on('barrage', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      const event = data.event || data;
+      const contentKey = data.content?.key || data.commonBarrageContent?.key || '';
+      console.log(`[弹幕] ${event.nickname || event.user?.nickname || '未知'}: ${contentKey}`);
+      broadcast({
+        type: 'barrage',
+        userId: String(event.userId || event.user?.userId || ''),
+        username: event.uniqueId || event.user?.uniqueId || '',
+        nickname: event.nickname || event.user?.nickname || '',
+        content: contentKey,
+        barrageType: String(data.type || data.barrageType || ''),
+        timestamp: Date.now(),
+      });
+    });
+
+    // PK 对战状态
+    connection.on('linkMicBattle', (data) => {
+      if (connectionToken !== currentConnectionToken) return;
+      const anchors = [];
+      if (data.anchorInfo) {
+        for (const [, info] of Object.entries(data.anchorInfo)) {
+          anchors.push({
+            userId: String(info.userId || ''),
+            nickname: info.nickname || '',
+            profilePictureUrl: info.profilePictureUrl || '',
+          });
+        }
+      }
+      console.log(`[PK对战] battleId=${data.battleId || ''} status=${data.status || 0} anchors=${anchors.length}`);
+      broadcast({
+        type: 'linkMicBattle',
+        battleId: String(data.battleId || ''),
+        status: data.status || 0,
+        anchors,
+        timestamp: Date.now(),
+      });
+    });
+
     currentConnection = connection;
+    await connection.connect();
 
   } catch (err) {
     console.error('[TikTok] ❌ 连接失败:', err.message);
@@ -436,6 +602,11 @@ async function connectToLive(username, requestingClient) {
 
 // 断开直播间连接
 function disconnectFromLive() {
+  isConnecting = false;
+  if (connectTimeout) {
+    clearTimeout(connectTimeout);
+    connectTimeout = null;
+  }
   if (currentConnection) {
     console.log('[TikTok] 断开连接...');
     // A2: 先失效 token，防止旧事件泄漏
@@ -454,21 +625,21 @@ function disconnectFromLive() {
 httpServer.listen(PORT, '127.0.0.1', () => {
   console.log('');
   console.log('═══════════════════════════════════════════════════════');
-  console.log('  🎵 TikTok 直播评论采集服务 v2.3');
+  console.log('  🎵 TikTok 直播评论采集服务 v3.0');
   console.log('═══════════════════════════════════════════════════════');
   console.log(`  HTTP:      http://127.0.0.1:${PORT}`);
   console.log(`  WebSocket: ws://127.0.0.1:${PORT}?token=${AUTH_TOKEN}`);
   console.log(`  Token:     ${AUTH_TOKEN}`);
   console.log('═══════════════════════════════════════════════════════');
-  console.log('  采集事件:');
-  console.log('  - comment:   评论');
-  console.log('  - roomUser:  观众数 + 打赏榜Top');
-  console.log('  - gift:      礼物（含钻石价值）');
-  console.log('  - like:      点赞');
-  console.log('  - member:    观众进入');
-  console.log('  - follow:    关注主播');
-  console.log('  - share:     分享直播');
-  console.log('  - subscribe: 订阅粉丝团');
+  console.log('  基础事件:');
+  console.log('  - comment / roomUser / gift / like / member');
+  console.log('  - follow / share / subscribe');
+  console.log('  Tier 1 (电商/红包/排名):');
+  console.log('  - oecLiveShopping / envelope');
+  console.log('  - hourlyRank / rankUpdate / rankText');
+  console.log('  Tier 2 (PK/问答/表情/弹幕):');
+  console.log('  - questionNew / linkMicArmies / emote');
+  console.log('  - barrage / linkMicBattle');
   console.log('═══════════════════════════════════════════════════════');
   console.log('  等待 Chrome 扩展连接...');
   console.log('');

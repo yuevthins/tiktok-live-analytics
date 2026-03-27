@@ -182,7 +182,26 @@ function renderChart() {
   });
 }
 
-watch(() => [props.data, props.isDark], renderChart, { deep: true });
+// Theme change: full rebuild (colors, gradients change)
+watch(() => props.isDark, () => {
+  renderChart();
+});
+
+// Data change: incremental update (no animation flash)
+watch(() => props.data, (newData) => {
+  if (!chartInstance || !newData.length) {
+    renderChart();
+    return;
+  }
+  const labels = newData.map(d => {
+    const date = new Date(d.timestamp);
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  });
+  const values = newData.map(d => d.count);
+  chartInstance.data.labels = labels;
+  chartInstance.data.datasets[0].data = values;
+  chartInstance.update('none');
+}, { deep: true });
 
 onMounted(() => {
   renderChart();

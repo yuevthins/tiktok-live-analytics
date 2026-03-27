@@ -1,6 +1,6 @@
 import Dexie, { type Table } from 'dexie';
-import type { Session, Comment, Gift, ViewerCount, Follow, Share, Subscribe, Like } from '../types';
-export type { Follow, Share, Subscribe, Like };
+import type { Session, Comment, Gift, ViewerCount, Follow, Share, Subscribe, Like, Shopping, Envelope, Question, BattleScore, EmoteRecord, Barrage } from '../types';
+export type { Follow, Share, Subscribe, Like, Shopping, Envelope, Question, BattleScore, EmoteRecord, Barrage };
 
 export class TikTokLiveDB extends Dexie {
   sessions!: Table<Session, number>;
@@ -11,6 +11,12 @@ export class TikTokLiveDB extends Dexie {
   shares!: Table<Share, number>;
   subscribes!: Table<Subscribe, number>;
   likes!: Table<Like, number>;
+  shoppings!: Table<Shopping, number>;
+  envelopes!: Table<Envelope, number>;
+  questions!: Table<Question, number>;
+  battleScores!: Table<BattleScore, number>;
+  emotes!: Table<EmoteRecord, number>;
+  barrages!: Table<Barrage, number>;
 
   constructor() {
     super('TikTokLiveDB');
@@ -41,6 +47,15 @@ export class TikTokLiveDB extends Dexie {
       shares: '++id, sessionId, &[sessionId+uniqueId], timestamp',
       subscribes: '++id, sessionId, &[sessionId+uniqueId], timestamp',
       likes: '++id, sessionId, timestamp',
+    });
+    // 版本 6: 电商/红包/问答/PK/表情/弹幕 6 张新表（Dexie 自动继承未变更的表）
+    this.version(6).stores({
+      shoppings: '++id, sessionId, timestamp',
+      envelopes: '++id, sessionId, &[sessionId+envelopeId], timestamp',
+      questions: '++id, sessionId, &[sessionId+questionId], timestamp',
+      battleScores: '++id, sessionId, battleId, timestamp',
+      emotes: '++id, sessionId, timestamp',
+      barrages: '++id, sessionId, timestamp',
     });
   }
 }
@@ -216,6 +231,106 @@ export const dbHelper = {
     return await db.likes.where('sessionId').equals(sessionId).toArray();
   },
 
+  // ========== 新增表 CRUD（v6） ==========
+
+  async addShopping(sessionId: number, data: {
+    productName: string; productPrice: string; shopName: string; productImageUrl?: string; timestamp: number;
+  }): Promise<number> {
+    return await db.shoppings.add({
+      sessionId, productName: data.productName, productPrice: data.productPrice,
+      shopName: data.shopName, productImageUrl: data.productImageUrl,
+      timestamp: new Date(data.timestamp),
+    });
+  },
+
+  async addEnvelope(sessionId: number, data: {
+    envelopeId: string; senderNickname: string; diamondCount: number; participantCount: number; timestamp: number;
+  }): Promise<number> {
+    return await db.envelopes.add({
+      sessionId, envelopeId: data.envelopeId, senderNickname: data.senderNickname,
+      diamondCount: data.diamondCount, participantCount: data.participantCount,
+      timestamp: new Date(data.timestamp),
+    });
+  },
+
+  async addQuestion(sessionId: number, data: {
+    questionId: string; userId: string; username: string; nickname: string; content: string; timestamp: number;
+  }): Promise<number> {
+    return await db.questions.add({
+      sessionId, questionId: data.questionId, userId: data.userId,
+      username: data.username, nickname: data.nickname, content: data.content,
+      timestamp: new Date(data.timestamp),
+    });
+  },
+
+  async addBattleScore(sessionId: number, data: {
+    battleId: string; battleItems: Array<{ hostUserId: string; hostNickname: string; points: number }>; timestamp: number;
+  }): Promise<number> {
+    return await db.battleScores.add({
+      sessionId, battleId: data.battleId, battleItems: data.battleItems,
+      timestamp: new Date(data.timestamp),
+    });
+  },
+
+  async addEmote(sessionId: number, data: {
+    userId: string; username: string; nickname: string; emoteId: string; emoteImageUrl?: string; timestamp: number;
+  }): Promise<number> {
+    return await db.emotes.add({
+      sessionId, userId: data.userId, username: data.username,
+      nickname: data.nickname, emoteId: data.emoteId, emoteImageUrl: data.emoteImageUrl,
+      timestamp: new Date(data.timestamp),
+    });
+  },
+
+  async addBarrage(sessionId: number, data: {
+    userId: string; username: string; nickname: string; content: string; barrageType: string; timestamp: number;
+  }): Promise<number> {
+    return await db.barrages.add({
+      sessionId, userId: data.userId, username: data.username,
+      nickname: data.nickname, content: data.content, barrageType: data.barrageType,
+      timestamp: new Date(data.timestamp),
+    });
+  },
+
+  async getShoppingsBySession(sessionId: number): Promise<Shopping[]> {
+    return await db.shoppings.where('sessionId').equals(sessionId).toArray();
+  },
+  async getEnvelopesBySession(sessionId: number): Promise<Envelope[]> {
+    return await db.envelopes.where('sessionId').equals(sessionId).toArray();
+  },
+  async getQuestionsBySession(sessionId: number): Promise<Question[]> {
+    return await db.questions.where('sessionId').equals(sessionId).toArray();
+  },
+  async getBattleScoresBySession(sessionId: number): Promise<BattleScore[]> {
+    return await db.battleScores.where('sessionId').equals(sessionId).toArray();
+  },
+  async getEmotesBySession(sessionId: number): Promise<EmoteRecord[]> {
+    return await db.emotes.where('sessionId').equals(sessionId).toArray();
+  },
+  async getBarragesBySession(sessionId: number): Promise<Barrage[]> {
+    return await db.barrages.where('sessionId').equals(sessionId).toArray();
+  },
+
+  // 一次性获取会话所有数据（供导出使用）
+  async getAllSessionData(sessionId: number) {
+    const [comments, gifts, viewerCounts, follows, shares, subscribes, shoppings, envelopes, questions, battleScores, emotes, barrages, stats] = await Promise.all([
+      this.getCommentsBySession(sessionId),
+      this.getGiftsBySession(sessionId),
+      this.getViewerCountsBySession(sessionId),
+      this.getFollowsBySession(sessionId),
+      this.getSharesBySession(sessionId),
+      this.getSubscribesBySession(sessionId),
+      this.getShoppingsBySession(sessionId),
+      this.getEnvelopesBySession(sessionId),
+      this.getQuestionsBySession(sessionId),
+      this.getBattleScoresBySession(sessionId),
+      this.getEmotesBySession(sessionId),
+      this.getBarragesBySession(sessionId),
+      this.getSessionStats(sessionId),
+    ]);
+    return { comments, gifts, viewerCounts, follows, shares, subscribes, shoppings, envelopes, questions, battleScores, emotes, barrages, stats };
+  },
+
   // 获取会话
   async getSession(sessionId: number): Promise<Session | undefined> {
     return await db.sessions.get(sessionId);
@@ -234,41 +349,49 @@ export const dbHelper = {
     totalFollows: number;
     totalShares: number;
     totalSubscribes: number;
+    totalShoppings: number;
+    totalEnvelopes: number;
+    totalEnvelopeDiamonds: number;
+    totalQuestions: number;
+    totalEmotes: number;
+    totalBarrages: number;
     peakViewers: number;
     avgViewers: number;
   }> {
-    const totalComments = await db.comments.where('sessionId').equals(sessionId).count();
+    const q = (table: typeof db.comments) => table.where('sessionId').equals(sessionId);
 
-    // 礼物统计：totalGifts = 礼物记录条数（送了几次），totalDiamonds = 钻石总价值
-    const totalGifts = await db.gifts.where('sessionId').equals(sessionId).count();
-    let totalDiamonds = 0;
-    await db.gifts.where('sessionId').equals(sessionId).each(gift => {
-      const count = gift.repeatCount || 1;
-      const diamonds = gift.diamondCount || 0;
-      totalDiamonds += diamonds * count;
-    });
+    const [totalComments, giftRows, totalFollows, totalShares, totalSubscribes,
+           viewerRows, totalShoppings, envelopeRows, totalQuestions, totalEmotes, totalBarrages] = await Promise.all([
+      q(db.comments).count(),
+      q(db.gifts).toArray(),
+      q(db.follows).count(),
+      q(db.shares).count(),
+      q(db.subscribes).count(),
+      q(db.viewerCounts).toArray(),
+      q(db.shoppings).count(),
+      q(db.envelopes).toArray(),
+      q(db.questions).count(),
+      q(db.emotes).count(),
+      q(db.barrages).count(),
+    ]);
 
-    // 新增统计
-    const totalFollows = await db.follows.where('sessionId').equals(sessionId).count();
-    const totalShares = await db.shares.where('sessionId').equals(sessionId).count();
-    const totalSubscribes = await db.subscribes.where('sessionId').equals(sessionId).count();
+    const totalGifts = giftRows.length;
+    const totalDiamonds = giftRows.reduce((sum, g) => sum + (g.diamondCount || 0) * (g.repeatCount || 1), 0);
 
-    // 观众数统计
+    const totalEnvelopes = envelopeRows.length;
+    const totalEnvelopeDiamonds = envelopeRows.reduce((sum, e) => sum + (e.diamondCount || 0), 0);
+
     let peakViewers = 0;
     let totalViewers = 0;
     let viewerRecords = 0;
-
-    await db.viewerCounts.where('sessionId').equals(sessionId).each(record => {
+    for (const record of viewerRows) {
       const count = record.count;
       if (typeof count === 'number' && !isNaN(count)) {
         viewerRecords++;
         totalViewers += count;
-        if (count > peakViewers) {
-          peakViewers = count;
-        }
+        if (count > peakViewers) peakViewers = count;
       }
-    });
-
+    }
     const avgViewers = viewerRecords > 0 ? Math.round(totalViewers / viewerRecords) : 0;
 
     return {
@@ -278,6 +401,12 @@ export const dbHelper = {
       totalFollows,
       totalShares,
       totalSubscribes,
+      totalShoppings,
+      totalEnvelopes,
+      totalEnvelopeDiamonds,
+      totalQuestions,
+      totalEmotes,
+      totalBarrages,
       peakViewers,
       avgViewers,
     };
@@ -290,7 +419,7 @@ export const dbHelper = {
 
   // 删除会话及其数据
   async deleteSession(sessionId: number): Promise<void> {
-    await db.transaction('rw', [db.sessions, db.comments, db.gifts, db.viewerCounts, db.follows, db.shares, db.subscribes, db.likes], async () => {
+    await db.transaction('rw', [db.sessions, db.comments, db.gifts, db.viewerCounts, db.follows, db.shares, db.subscribes, db.likes, db.shoppings, db.envelopes, db.questions, db.battleScores, db.emotes, db.barrages], async () => {
       await db.comments.where('sessionId').equals(sessionId).delete();
       await db.gifts.where('sessionId').equals(sessionId).delete();
       await db.viewerCounts.where('sessionId').equals(sessionId).delete();
@@ -298,13 +427,19 @@ export const dbHelper = {
       await db.shares.where('sessionId').equals(sessionId).delete();
       await db.subscribes.where('sessionId').equals(sessionId).delete();
       await db.likes.where('sessionId').equals(sessionId).delete();
+      await db.shoppings.where('sessionId').equals(sessionId).delete();
+      await db.envelopes.where('sessionId').equals(sessionId).delete();
+      await db.questions.where('sessionId').equals(sessionId).delete();
+      await db.battleScores.where('sessionId').equals(sessionId).delete();
+      await db.emotes.where('sessionId').equals(sessionId).delete();
+      await db.barrages.where('sessionId').equals(sessionId).delete();
       await db.sessions.delete(sessionId);
     });
   },
 
   // 清除所有数据（事务化，防止中途崩溃导致数据不一致）
   async clearAll(): Promise<void> {
-    await db.transaction('rw', [db.sessions, db.comments, db.gifts, db.viewerCounts, db.follows, db.shares, db.subscribes, db.likes], async () => {
+    await db.transaction('rw', [db.sessions, db.comments, db.gifts, db.viewerCounts, db.follows, db.shares, db.subscribes, db.likes, db.shoppings, db.envelopes, db.questions, db.battleScores, db.emotes, db.barrages], async () => {
       await db.sessions.clear();
       await db.comments.clear();
       await db.gifts.clear();
@@ -313,6 +448,12 @@ export const dbHelper = {
       await db.shares.clear();
       await db.subscribes.clear();
       await db.likes.clear();
+      await db.shoppings.clear();
+      await db.envelopes.clear();
+      await db.questions.clear();
+      await db.battleScores.clear();
+      await db.emotes.clear();
+      await db.barrages.clear();
     });
   },
 
